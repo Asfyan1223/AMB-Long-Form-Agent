@@ -1,0 +1,25 @@
+# Compiled Code
+__pycache__/
+build/
+dist/
+InstallerOutput/
+*.exe
+*.spec
+
+# Temp Files & Outputs
+temp/
+temp_cache/
+lf_temp/
+output/
+*.mp4
+*.mp3
+
+# Security & Credentials
+credentials/
+*.json
+*.pem
+
+# Assets (Add any other heavy folders specific to your long form project here)
+Assest/
+backgrounds/
+font/
