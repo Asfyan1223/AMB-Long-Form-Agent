@@ -160,7 +160,8 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
     # Build video filter with or without subtitles
     video_filter = "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
     if srt_path and os.path.exists(srt_path):
-        safe_srt_path = os.path.abspath(srt_path).replace('\\', '/').replace(':', '\\:')
+        # Convert to relative path to completely avoid Windows drive-letter colon (:) escaping issues on MSYS2/EC2/FFmpeg
+        safe_srt_path = os.path.relpath(srt_path).replace('\\', '/')
         # Disables text wrapping completely by passing WrapStyle=2,Flm=0 and locking Alignment=2
         video_filter += f",subtitles='{safe_srt_path}':force_style='Alignment=2,FontSize={sub_size},PrimaryColour={ssa_color},Outline=2,Shadow=1,MarginV=20,WrapStyle=2,Flm=0'"
     video_filter += "[vout]"
