@@ -14,7 +14,8 @@ from datetime import datetime
 import pystray
 from PIL import Image, ImageDraw, ImageTk
 import gc
-import winreg 
+import winreg
+import psutil
 
 # --- GLOBAL FFMPEG PATH INJECTION ---
 # Forces Windows subprocesses to recognize ffmpeg and ffprobe natively
@@ -53,6 +54,13 @@ os.makedirs(LF_OUTPUT, exist_ok=True)
 os.makedirs(LF_SCRIPTS, exist_ok=True)
 os.makedirs(LF_ASSETS, exist_ok=True)
 os.makedirs(creds_vault_dir, exist_ok=True)
+
+# --- DYNAMIC RAM BOOT LOG ---
+_mem = psutil.virtual_memory()
+_total_gb = round(_mem.total / (1024 ** 3), 1)
+_alloc_gb = round(_total_gb * 0.75, 1)
+print(f"[+] Dynamic Memory: Total {_total_gb}GB | Allocating {_alloc_gb}GB (75%)")
+# ----------------------------
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("green")
@@ -437,7 +445,7 @@ class IslamicReelsStudio(ctk.CTk):
             time_left = next_post - current_time
             
             if time_left <= 0:
-                status_text = "Status: Ready to Render (Waiting for Traffic Light...)" if self.engine_is_busy else "Status: Ready to Render"
+                status_text = "Status: Engine Busy..." if self.engine_is_busy else "Status: Ready to Render"
                 color = "#2ECC71"
             else:
                 hrs = int(time_left // 3600)
@@ -1015,7 +1023,6 @@ class IslamicReelsStudio(ctk.CTk):
                 image_path = abs_image_path
         
         if self.engine_is_busy:
-            print("   > 🚦 Traffic Light: Engine is currently busy. Skipping Long-Form generation cycle.")
             return
 
         self.engine_is_busy = True

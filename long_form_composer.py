@@ -23,7 +23,37 @@ import subprocess
 import edge_tts
 import imageio_ffmpeg
 import math
+import psutil
 from faster_whisper import WhisperModel
+
+# ---------------------------------------------------------------------------
+# Module-level helpers: dynamic RAM allocation + nvidia-smi GPU detection
+# ---------------------------------------------------------------------------
+
+def _get_ram_allocation():
+    """Returns (total_gb, allocated_gb, allocated_bytes) using 75% of total RAM."""
+    mem = psutil.virtual_memory()
+    total_gb = mem.total / (1024 ** 3)
+    allocated_gb = total_gb * 0.75
+    allocated_bytes = int(mem.total * 0.75)
+    return round(total_gb, 1), round(allocated_gb, 1), allocated_bytes
+
+def detect_nvidia_gpu():
+    """Returns True if nvidia-smi reports a GPU, False otherwise."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            gpu_name = result.stdout.strip().splitlines()[0]
+            print(f"[+] Nvidia GPU Detected: Using NVENC Hardware Acceleration ({gpu_name})")
+            return True
+    except Exception:
+        pass
+    print("[-] No GPU Detected: Falling back to CPU rendering (libx264)")
+    return False
+# ---------------------------------------------------------------------------
 
 # PATH injection above supersedes explicit AudioSegment attribute overrides.
 # Pydub will now resolve ffmpeg/ffprobe via the system PATH set above.
@@ -47,15 +77,17 @@ def format_time(seconds):
 def generate_srt(audio_path, srt_output_path, hardware_mode="Standard", device="cpu", language="English"):
     print("   > 🧠 Running Whisper AI to generate .srt Subtitles (60s Chunk Loop)...")
     
-    cpu_threads = 4
+    # Dynamic thread allocation: scale with physical CPU count, cap to 75%-RAM tier
+    total_gb, allocated_gb, _ = _get_ram_allocation()
+    logical_cores = psutil.cpu_count(logical=True) or 4
     if hardware_mode == "Low-End PC (Fastest)":
-        cpu_threads = 2
-    elif hardware_mode == "Standard":
-        cpu_threads = 4
+        cpu_threads = max(2, logical_cores // 4)
     elif hardware_mode == "High-End Workstation":
-        cpu_threads = 8
+        cpu_threads = min(logical_cores, 16)
+    else:  # Standard / fallback
+        cpu_threads = max(2, logical_cores // 2)
         
-    print(f"   > ⚙️ Whisper Threads Allocated: {cpu_threads}")
+    print(f"   > ⚙️ Whisper Threads Allocated: {cpu_threads} | RAM Budget: {allocated_gb}GB / {total_gb}GB (75%)") 
     
     # Configure Whisper for dynamic GPU acceleration
     whisper_device = "cuda" if device == "cuda" else "cpu"
@@ -156,7 +188,8 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
     if final_output_path:
         final_output_path = os.path.join(os.getcwd(), "lf_output", os.path.basename(final_output_path))
 
-    print("   > 🎬 Booting FFmpeg Render Engine (Low-RAM Mode)...")
+    total_gb, allocated_gb, _ = _get_ram_allocation()
+    print(f"   > 🎬 Booting FFmpeg Render Engine | [+] Dynamic Memory: Total {total_gb}GB | Allocating {allocated_gb}GB (75%)")
     ffmpeg_exe = FFMPEG_PATH
     
     cmd = [
@@ -219,27 +252,29 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
         filter_complex = f"{video_filter}"
         audio_map = '1:a'
  
-    preset = "veryfast"
-    threads = "4"
+    # Dynamic FFmpeg thread count: scale with CPU cores
+    logical_cores = psutil.cpu_count(logical=True) or 4
     if hardware_mode == "Low-End PC (Fastest)":
         preset = "ultrafast"
-        threads = "2"
-    elif hardware_mode == "Standard":
-        preset = "veryfast"
-        threads = "4"
+        threads = str(max(2, logical_cores // 4))
     elif hardware_mode == "High-End Workstation":
         preset = "fast"
-        threads = "8"
+        threads = str(min(logical_cores, 16))
+    else:  # Standard / fallback
+        preset = "veryfast"
+        threads = str(max(2, logical_cores // 2))
 
-    # Select the optimal video encoder based on the system hardware profile
+    # Select the optimal video encoder: CUDA > AMF > nvidia-smi re-check > CPU
     if device == "cuda":
         print("   > 🚀 Dynamic GPU Encoder: NVIDIA NVENC (h264_nvenc) selected.")
         video_codec_args = ['-c:v', 'h264_nvenc', '-preset', 'p3', '-rc', 'constqp', '-qp', '23']
     elif device == "amf":
         print("   > 🚀 Dynamic GPU Encoder: AMD AMF (h264_amf) selected.")
         video_codec_args = ['-c:v', 'h264_amf']
+    elif detect_nvidia_gpu():
+        # CPU mode but nvidia-smi confirms an NVENC-capable GPU is present
+        video_codec_args = ['-c:v', 'h264_nvenc', '-preset', 'p3', '-rc', 'constqp', '-qp', '23']
     else:
-        print("   > 🐌 GPU Acceleration Unavailable. Using libx264 CPU encoder.")
         video_codec_args = ['-c:v', 'libx264', '-preset', preset, '-tune', 'stillimage', '-crf', '23']
 
     print(f"   > ⚙️ FFmpeg Allocation: Preset={preset}, Threads={threads}")
