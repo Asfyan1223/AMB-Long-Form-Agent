@@ -16,19 +16,36 @@ from PIL import Image, ImageDraw, ImageTk
 import gc
 import winreg 
 
-if getattr(sys, 'frozen', False):
-    install_dir = os.path.dirname(sys.executable)
-else:
-    install_dir = os.path.dirname(os.path.abspath(__file__))
+# --- ABSOLUTE LOCAL ANCHOR ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(BASE_DIR)
 
-app_data_dir = os.path.join(os.environ.get('APPDATA', ''), 'IslamicReelsStudio')
-creds_vault_dir = os.path.join(install_dir, 'credentials') 
+# Migrate settings.json from AppData if it exists there but is missing locally
+old_app_data_dir = os.path.join(os.environ.get('APPDATA', ''), 'IslamicReelsStudio')
+old_settings_path = os.path.join(old_app_data_dir, 'settings.json')
+local_settings_path = os.path.join(BASE_DIR, 'settings.json')
 
-os.makedirs(app_data_dir, exist_ok=True)
+if not os.path.exists(local_settings_path) and os.path.exists(old_settings_path):
+    try:
+        import shutil
+        shutil.copy2(old_settings_path, local_settings_path)
+        print("[SYSTEM] Migrated settings.json from AppData to local folder.")
+    except Exception as e:
+        print(f"[SYSTEM] Warning: Failed to migrate settings.json: {e}")
+
+install_dir = BASE_DIR
+creds_vault_dir = os.path.join(install_dir, 'credentials')
+
+LF_TEMP = os.path.join(BASE_DIR, "lf_temp")
+LF_OUTPUT = os.path.join(BASE_DIR, "lf_output")
+LF_SCRIPTS = os.path.join(BASE_DIR, "lf_scripts")
+LF_ASSETS = os.path.join(BASE_DIR, "lf_assets")
+
+os.makedirs(LF_TEMP, exist_ok=True)
+os.makedirs(LF_OUTPUT, exist_ok=True)
+os.makedirs(LF_SCRIPTS, exist_ok=True)
+os.makedirs(LF_ASSETS, exist_ok=True)
 os.makedirs(creds_vault_dir, exist_ok=True)
-
-# Change working directory to AppData for loading/saving settings
-os.chdir(app_data_dir)
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("green")

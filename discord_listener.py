@@ -21,7 +21,7 @@ if getattr(sys, 'frozen', False):
 else:
     install_dir = os.path.dirname(os.path.abspath(__file__))
 
-SETTINGS_FILE = os.path.join(os.environ.get('APPDATA', ''), 'IslamicReelsStudio', 'settings.json')
+SETTINGS_FILE = os.path.join(install_dir, 'settings.json')
 QUEUE_DIR = os.path.join(install_dir, "lf_queues")
 ASSETS_DIR = os.path.join(install_dir, "lf_assets")
 

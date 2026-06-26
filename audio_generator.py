@@ -15,7 +15,7 @@ import subprocess
 import edge_tts
 import imageio_ffmpeg
 
-TEMP_DIR = "lf_temp"
+TEMP_DIR = os.path.join(os.getcwd(), "lf_temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Map Voice Actors to edge_tts Neural Voices

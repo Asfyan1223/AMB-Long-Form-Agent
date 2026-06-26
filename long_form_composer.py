@@ -18,8 +18,8 @@ import math
 from faster_whisper import WhisperModel
 from pydub import AudioSegment
 
-TEMP_DIR = "lf_temp"
-OUTPUT_DIR = "lf_output"
+TEMP_DIR = os.path.join(os.getcwd(), "lf_temp")
+OUTPUT_DIR = os.path.join(os.getcwd(), "lf_output")
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -135,6 +135,16 @@ def generate_srt(audio_path, srt_output_path, hardware_mode="Standard", device="
     print(f"   > ✅ Subtitle file generated: {srt_output_path}")
 
 def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, final_output_path, sub_size="24", sub_color="Yellow", sub_position="Bottom", hardware_mode="Standard", device="cpu", bg_music_enabled=True):
+    # Enforce strict local directory routing to purge any legacy AppData path inputs
+    if srt_path:
+        srt_path = os.path.join(os.getcwd(), "lf_temp", os.path.basename(srt_path))
+    if audio_path:
+        audio_path = os.path.join(os.getcwd(), "lf_temp", os.path.basename(audio_path))
+    if image_path:
+        image_path = os.path.join(os.getcwd(), "lf_assets", os.path.basename(image_path))
+    if final_output_path:
+        final_output_path = os.path.join(os.getcwd(), "lf_output", os.path.basename(final_output_path))
+
     print("   > 🎬 Booting FFmpeg Render Engine (Low-RAM Mode)...")
     ffmpeg_exe = FFMPEG_PATH
     
