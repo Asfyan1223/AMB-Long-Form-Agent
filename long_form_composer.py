@@ -16,7 +16,13 @@ import edge_tts
 import imageio_ffmpeg
 import math
 from faster_whisper import WhisperModel
+
+# --- PYDUB FFMPEG PATH OVERRIDE ---
+# Force pydub to use the exact absolute paths to the local FFmpeg installation
 from pydub import AudioSegment
+AudioSegment.converter = r"C:\ffmpeg\bin\ffmpeg.exe"
+AudioSegment.ffprobe = r"C:\ffmpeg\bin\ffprobe.exe"
+# ----------------------------------
 
 TEMP_DIR = os.path.join(os.getcwd(), "lf_temp")
 OUTPUT_DIR = os.path.join(os.getcwd(), "lf_output")
