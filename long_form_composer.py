@@ -159,11 +159,24 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
 
     # Build video filter with or without subtitles
     video_filter = "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
-    if srt_path and os.path.exists(srt_path):
-        # Convert to relative path to completely avoid Windows drive-letter colon (:) escaping issues on MSYS2/EC2/FFmpeg
-        safe_srt_path = os.path.relpath(srt_path).replace('\\', '/')
+    if srt_path:
+        import sys
+        # 1. Force the absolute path
+        abs_srt_path = os.path.abspath(srt_path)
+
+        # 2. INTEGRITY CHECK: Stop the loop if the file literally doesn't exist
+        if not os.path.exists(abs_srt_path):
+            print("\n=======================================================")
+            print("🚨 CRITICAL ERROR: SUBTITLE FILE MISSING 🚨")
+            print(f"Path: {abs_srt_path}")
+            print("Whisper failed to create the .srt file. Halting render!")
+            print("=======================================================\n")
+            sys.exit()
+
+        # 3. The Ultimate Windows FFmpeg Escaping
+        ffmpeg_safe_srt = abs_srt_path.replace("\\", "/").replace(":", "\\:")
         # Disables text wrapping completely by passing WrapStyle=2,Flm=0 and locking Alignment=2
-        video_filter += f",subtitles='{safe_srt_path}':force_style='Alignment=2,FontSize={sub_size},PrimaryColour={ssa_color},Outline=2,Shadow=1,MarginV=20,WrapStyle=2,Flm=0'"
+        video_filter += f",subtitles='{ffmpeg_safe_srt}':force_style='Alignment=2,FontSize={sub_size},PrimaryColour={ssa_color},Outline=2,Shadow=1,MarginV=20,WrapStyle=2,Flm=0'"
     video_filter += "[vout]"
     
     # Conditionally mix background music if enabled
