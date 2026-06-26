@@ -16,6 +16,13 @@ from PIL import Image, ImageDraw, ImageTk
 import gc
 import winreg 
 
+# --- GLOBAL FFMPEG PATH INJECTION ---
+# Forces Windows subprocesses to recognize ffmpeg and ffprobe natively
+_ffmpeg_bin_path = r"C:\ffmpeg\bin"
+if _ffmpeg_bin_path not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _ffmpeg_bin_path + os.pathsep + os.environ.get("PATH", "")
+# ------------------------------------
+
 # --- ABSOLUTE LOCAL ANCHOR ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)

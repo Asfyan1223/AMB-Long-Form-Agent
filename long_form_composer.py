@@ -1,5 +1,13 @@
 import os
 
+# --- GLOBAL FFMPEG PATH INJECTION ---
+# Failsafe: prepend C:\ffmpeg\bin to PATH so ALL subprocesses (including pydub's
+# internal mediainfo_json) can locate ffmpeg.exe and ffprobe.exe natively.
+_ffmpeg_bin_path = r"C:\ffmpeg\bin"
+if _ffmpeg_bin_path not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _ffmpeg_bin_path + os.pathsep + os.environ.get("PATH", "")
+# ------------------------------------
+
 FFMPEG_PATH = r"C:\ffmpeg\bin\ffmpeg.exe"
 FFPROBE_PATH = r"C:\ffmpeg\bin\ffprobe.exe"
 
@@ -17,12 +25,9 @@ import imageio_ffmpeg
 import math
 from faster_whisper import WhisperModel
 
-# --- PYDUB FFMPEG PATH OVERRIDE ---
-# Force pydub to use the exact absolute paths to the local FFmpeg installation
+# PATH injection above supersedes explicit AudioSegment attribute overrides.
+# Pydub will now resolve ffmpeg/ffprobe via the system PATH set above.
 from pydub import AudioSegment
-AudioSegment.converter = r"C:\ffmpeg\bin\ffmpeg.exe"
-AudioSegment.ffprobe = r"C:\ffmpeg\bin\ffprobe.exe"
-# ----------------------------------
 
 TEMP_DIR = os.path.join(os.getcwd(), "lf_temp")
 OUTPUT_DIR = os.path.join(os.getcwd(), "lf_output")
