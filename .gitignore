@@ -1,4 +1,6 @@
+*.log
 # Compiled Code
+
 __pycache__/
 build/
 dist/
