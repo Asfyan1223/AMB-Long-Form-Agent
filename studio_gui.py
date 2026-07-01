@@ -219,6 +219,18 @@ class IslamicReelsStudio(ctk.CTk):
         self.log_textbox.configure(state="disabled")
         sys.stdout = RedirectText(self.log_textbox, self)
 
+        # Upload Progress Bar Card
+        self.upload_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=12)
+        self.upload_card.pack(pady=(0, 6), padx=40, fill="x")
+        upload_inner = ctk.CTkFrame(self.upload_card, fg_color="transparent")
+        upload_inner.pack(fill="x", padx=20, pady=10)
+        ctk.CTkLabel(upload_inner, text="📤 Upload Progress:", font=ctk.CTkFont(weight="bold", size=13)).pack(side="left", padx=(0, 10))
+        self.upload_progress_bar = ctk.CTkProgressBar(upload_inner, width=480, height=18, corner_radius=9, progress_color="#00D2FF", fg_color="#2B2B2B")
+        self.upload_progress_bar.set(0)
+        self.upload_progress_bar.pack(side="left", padx=(0, 12))
+        self.upload_pct_label = ctk.CTkLabel(upload_inner, text="Idle", font=ctk.CTkFont(size=13, weight="bold"), text_color="#A29BFE", width=90)
+        self.upload_pct_label.pack(side="left")
+
         # Control and Action Buttons Card
         self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.btn_frame.pack(pady=(10, 20), padx=40, fill="x")
@@ -266,7 +278,30 @@ class IslamicReelsStudio(ctk.CTk):
                 print("   > 🥷 Booted by Windows Startup. Hiding in System Tray...")
                 self.after(100, self.hide_window)
 
+    def update_upload_progress(self, pct):
+        """Thread-safe progress bar updater — called from the background upload thread."""
+        def _do_update():
+            try:
+                self.upload_progress_bar.set(pct / 100)
+                if pct >= 100:
+                    self.upload_pct_label.configure(text="✅ Done!", text_color="#2ECC71")
+                    # Auto-reset to Idle after 4 seconds
+                    self.after(4000, self._reset_upload_bar)
+                else:
+                    self.upload_pct_label.configure(text=f"{pct}%", text_color="#00D2FF")
+            except Exception:
+                pass
+        self.after(0, _do_update)
+
+    def _reset_upload_bar(self):
+        try:
+            self.upload_progress_bar.set(0)
+            self.upload_pct_label.configure(text="Idle", text_color="#A29BFE")
+        except Exception:
+            pass
+
     def probe_gpu(self):
+
         device = "cpu"
         try:
             import torch
@@ -384,7 +419,8 @@ class IslamicReelsStudio(ctk.CTk):
             "lf_bg_music": "",
             "lf_bg_music_enabled": True,
             "lf_last_upload_time": 0,
-            "hardware_profile": "cpu"
+            "hardware_profile": "cpu",
+            "lf_metadata_language": "English"
         }
 
     def load_settings(self):
@@ -839,7 +875,20 @@ class IslamicReelsStudio(ctk.CTk):
 
         ctk.CTkLabel(lang_row, text="Sub Language:").pack(side="left", padx=(15, 5))
         lf_sub_lang_var = ctk.StringVar(value=self.get_active_setting("lf_subtitle_language", "Arabic"))
-        ctk.CTkOptionMenu(lang_row, variable=lf_sub_lang_var, values=["Arabic", "English", "German", "Russian", "None"], width=110).pack(side="left", padx=5)
+        ctk.CTkOptionMenu(lang_row, variable=lf_sub_lang_var, values=["Arabic", "English", "German", "Russian", "Urdu", "None"], width=110).pack(side="left", padx=5)
+
+        # Title & Description Language Dropdown
+        meta_lang_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
+        meta_lang_row.pack(fill="x", pady=10)
+        ctk.CTkLabel(meta_lang_row, text="Title & Description Language:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=(10, 5))
+        lf_metadata_lang_var = ctk.StringVar(value=self.get_active_setting("lf_metadata_language", "English"))
+        ctk.CTkOptionMenu(
+            meta_lang_row,
+            variable=lf_metadata_lang_var,
+            values=["English", "Arabic", "German", "Russian", "Urdu"],
+            width=140
+        ).pack(side="left", padx=5)
+        ctk.CTkLabel(meta_lang_row, text="← AI generates title, description & hashtags in this language", font=ctk.CTkFont(size=11), text_color="#888").pack(side="left", padx=(10, 0))
 
         # Trigger dynamic population initially
         update_voice_menu(lf_main_lang_var.get())
@@ -931,6 +980,7 @@ class IslamicReelsStudio(ctk.CTk):
             self.set_active_setting("lf_script_style", lf_style_var.get())
             self.set_active_setting("lf_bg_music", lf_music_entry.get())
             self.set_active_setting("lf_hardware_mode", lf_hw_mode_var.get())
+            self.set_active_setting("lf_metadata_language", lf_metadata_lang_var.get())
             
             self.save_settings()
             self.start_discord_listener()
@@ -1077,10 +1127,11 @@ class IslamicReelsStudio(ctk.CTk):
                 return
 
             # Read script content to generate dynamic AI metadata
+            metadata_language = settings.get("lf_metadata_language", "English")
             with open(script_file, "r", encoding="utf-8") as f:
                 script_text = f.read()
-                
-            metadata = scripter.generate_youtube_metadata(script_text)
+
+            metadata = scripter.generate_youtube_metadata(script_text, language=metadata_language)
             if metadata and metadata.get("title") and metadata.get("description"):
                 ai_title = metadata["title"]
                 ai_description = metadata["description"]
@@ -1159,7 +1210,11 @@ class IslamicReelsStudio(ctk.CTk):
                 
                 print("[+] Beginning YouTube Upload")
                 profile_yt_token = os.path.join(install_dir, "credentials", prof_name, "token.json")
-                social_engine.upload_to_youtube(vid_out, ai_title, ai_description, profile_yt_token, thumbnail_path=image_path)
+                social_engine.upload_to_youtube(
+                    vid_out, ai_title, ai_description, profile_yt_token,
+                    thumbnail_path=image_path,
+                    progress_callback=self.update_upload_progress
+                )
                 print("[+] YouTube Upload Success")
                 
                 # Part 2: Persistent Time Tracking & Cloud Sync

@@ -93,7 +93,7 @@ def compress_thumbnail(image_path, max_size_bytes=2000000):
         print(f"   > ❌ Thumbnail compression failed: {e}. Using original image.")
         return image_path
 
-def upload_to_youtube(video_path, title, description, token_path, thumbnail_path=None):
+def upload_to_youtube(video_path, title, description, token_path, thumbnail_path=None, progress_callback=None):
     print(f"   > 🌐 Initiating YouTube Upload Module...")
     print(f"   > 🔐 Target Token Vault: {token_path}")
     
@@ -133,17 +133,29 @@ def upload_to_youtube(video_path, title, description, token_path, thumbnail_path
             'status': {'privacyStatus': 'public', 'selfDeclaredMadeForKids': False}
         }
         from googleapiclient.http import MediaFileUpload
-        media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
+        # 10 MB chunks enable real-time progress reporting via next_chunk()
+        media = MediaFileUpload(video_path, chunksize=10 * 1024 * 1024, resumable=True)
         import socket
         import http.client
-        
+
         print("   > 🚀 Pushing video file to YouTube Servers...")
         req = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
-        
-        while True:
+
+        res = None
+        last_pct = -1
+        while res is None:
             try:
-                res = req.execute()
-                break
+                status, res = req.next_chunk()
+                if status:
+                    pct = int(status.progress() * 100)
+                    if pct != last_pct:
+                        print(f"   > 📤 Uploading... {pct}%")
+                        last_pct = pct
+                        if progress_callback:
+                            try:
+                                progress_callback(pct)
+                            except Exception:
+                                pass
             except (ConnectionResetError, socket.error, http.client.RemoteDisconnected) as net_err:
                 print(f"   > [!] Connection dropped: {net_err}. Retrying in 30 seconds...")
                 time.sleep(30)
@@ -154,6 +166,14 @@ def upload_to_youtube(video_path, title, description, token_path, thumbnail_path
                     time.sleep(30)
                 else:
                     raise e
+
+        # Signal 100% completion to GUI
+        if progress_callback:
+            try:
+                progress_callback(100)
+            except Exception:
+                pass
+
 
         print(f"   > ✅ YT Upload Success! Video ID: {res['id']}")
         

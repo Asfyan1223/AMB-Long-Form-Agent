@@ -191,31 +191,35 @@ class LongFormScripter:
         print(f"   > 💾 Master Script saved locally to: {output_file}")
         return output_file
 
-    def generate_youtube_metadata(self, script_text):
+    def generate_youtube_metadata(self, script_text, language="English"):
         import json
         import re
-        print("   > 🧠 Running AI metadata generator...")
+        print(f"   > 🧠 Running AI metadata generator (Language: {language})...")
         system_prompt = (
-            "You are an SEO expert. Read this video script and output a JSON object containing two keys: "
-            "'title' (a highly engaging, click-worthy YouTube title under 70 characters) and "
-            "'description' (a punchy, SEO-optimized summary with 5 relevant hashtags). "
-            "CRITICAL: Output ONLY valid JSON. Do not include markdown code block formatting (like ```json), introduction, or conclusion."
+            f"You are a multilingual YouTube SEO expert. Read the video script and output a JSON object with exactly two keys: "
+            f"'title' (a highly engaging, click-worthy YouTube title under 70 characters) and "
+            f"'description' (a compelling SEO-optimized description of 150-200 words followed by 8-10 relevant hashtags on a new line). "
+            f"IMPORTANT LANGUAGE RULE: Write BOTH the title and description entirely in {language}. "
+            f"Use {language} words, grammar, and culturally relevant phrasing for {language}-speaking audiences. "
+            f"The hashtags must also be written in {language} where applicable (e.g. Arabic hashtags for Arabic, Urdu hashtags for Urdu). "
+            f"Embed the hashtags directly inside the 'description' value at the end, separated by newlines. "
+            f"CRITICAL: Output ONLY valid JSON. Do not include markdown code block formatting (like ```json), introduction, or conclusion."
         )
-        
-        # Take a subset of the script text if it is too long to fit in standard token limits (e.g. first 3000 words + last 1000 words)
+
+        # Take a subset of the script text if it is too long to fit in standard token limits
         words = script_text.split()
         if len(words) > 4000:
             prompt_text = " ".join(words[:3000]) + "\n... [Script truncated for brevity] ...\n" + " ".join(words[-1000:])
         else:
             prompt_text = script_text
-            
-        user_prompt = f"Video Script:\n{prompt_text}\n\nOutput ONLY raw JSON format."
-        
+
+        user_prompt = f"Video Script:\n{prompt_text}\n\nOutput ONLY raw JSON format with title and description (including hashtags) in {language}."
+
         response = self._call_groq(system_prompt, user_prompt)
         if not response:
             print("   > ⚠️ Warning: Failed to generate dynamic metadata. Using fallback.")
             return None
-            
+
         try:
             cleaned = response.strip()
             if cleaned.startswith("```"):
@@ -225,9 +229,10 @@ class LongFormScripter:
                 if lines and lines[-1].startswith("```"):
                     lines = lines[:-1]
                 cleaned = "\n".join(lines).strip()
-            
+
             data = json.loads(cleaned)
             if "title" in data and "description" in data:
+                print(f"   > ✅ AI Metadata generated in {language}.")
                 return data
             else:
                 print("   > ⚠️ Warning: JSON did not contain 'title' and 'description' keys.")
