@@ -117,103 +117,248 @@ class LongFormScripter:
     def generate_full_script(self, title, language="English", style="Deep Emotional", total_parts=None):
         if total_parts is None:
             total_parts = self.total_parts
-        # Increased default total_parts to 20. 20 parts * ~450 words = ~9,000 words (1 hour)
+
         print("========================================")
         print(f"✍️ INITIATING GROQ SCRIPT ENGINE (1-Hour Format)")
         print(f"🎬 Title: {title} | Lang: {language} | Style: {style}")
         print("========================================")
 
-        # Aggressive System Prompt
-        system_prompt = (
-            f"You are an elite, professional scriptwriter for a high-end, slow-paced YouTube documentary channel. "
-            f"You write strictly in {language}. Your writing style is '{style}'. "
-            f"CRITICAL RULES: "
-            f"1. DO NOT SUMMARIZE. Write extremely long, detailed, and immersive paragraphs. "
-            f"2. Take your time. Describe the atmosphere, historical context, and deep emotional stakes of every single moment. "
-            f"3. Do not include visual cues, bracketed text, timestamps, or stage directions. Write ONLY the spoken voiceover dialogue. "
-            f"4. You MUST output a massive wall of text. Aim for maximum length."
-        )
+        IS_RUSSIAN_STORY = (style == "Russian Story (High Retention)")
+        IS_FAMILY_DRAMA  = (style == "Family Drama (High Retention)")
+
+        # ---------------------------------------------------------------
+        # SYSTEM PROMPTS
+        # ---------------------------------------------------------------
+        if IS_RUSSIAN_STORY:
+            # Part 1 — cold open, hook & twist enforced
+            opening_system_prompt = (
+                "You are an elite YouTube true-crime and drama scriptwriter. "
+                "Your goal is maximum audience retention.\n"
+                "CRITICAL RULES:\n"
+                "1. No philosophical introductions. Start immediately with the action.\n"
+                "2. 0:00 to 0:10 MUST be a punchy incident "
+                '(e.g., "John kissed his wife goodbye. Three days later, police said he drowned.").\n'
+                "3. 0:10 to 0:30 MUST contain a massive plot twist "
+                '(e.g., "But five years later, his son saw him at the airport.").\n'
+                "4. Write strictly at a 5th-grade reading level. "
+                "Use short, sharp, factual sentences.\n"
+                "5. BANNED WORDS: labyrinthine, tapestry, odyssey, depths of despair, "
+                "human condition, abyss. Do not use flowery, poetic, or novel-like language.\n"
+                "6. Focus on character actions, raw dialogue, and immediate conflict."
+            )
+            # Parts 2–N — zero recap, immediate continuation
+            continuation_system_prompt = (
+                "Continue the story from the exact second the last chapter ended. "
+                "Maintain the fast-paced, zero-filler, short-sentence structure. "
+                "DO NOT re-introduce the characters or summarize the previous chapter. "
+                "Immediately output the next scene. "
+                "BANNED WORDS: tapestry, odyssey, labyrinthine."
+            )
+
+        elif IS_FAMILY_DRAMA:
+            # Part 1 — emotional hook, dialogue-driven conflict enforced
+            opening_system_prompt = (
+                "You are an elite YouTube scriptwriter specializing in viral Family Drama and relatable life stories. "
+                "Your goal is maximum emotional engagement and viewer retention.\n"
+                "CRITICAL RULES:\n"
+                "1. No philosophical introductions or moralizing intros. "
+                "Start immediately with the core family conflict.\n"
+                "2. 0:00 to 0:15 MUST be a highly relatable but shocking hook "
+                '(e.g., "For ten years, I treated my stepdaughter like my own. '
+                'Then I saw the text messages on her phone.").\n'
+                "3. Rely heavily on raw, realistic dialogue between family members to move the plot forward. "
+                "Show, do not tell.\n"
+                "4. Write at a 5th-grade reading level. Use conversational, everyday English.\n"
+                "5. BANNED WORDS: tapestry, testament, symphony of emotions, rollercoaster of feelings, "
+                "delve, navigate. Do not use poetic or melodramatic AI language.\n"
+                "6. Build tension through secrets, betrayals, and satisfying resolutions."
+            )
+            # Parts 2–N — dialogue continuity, no recap
+            continuation_system_prompt = (
+                "Continue the family drama story from the exact sentence the last chapter ended. "
+                "Maintain the heavy use of realistic dialogue and emotional tension. "
+                "DO NOT summarize the previous chapter or re-introduce the family members. "
+                "Immediately output the next scene. Keep the language conversational. "
+                "BANNED WORDS: tapestry, navigate, symphony."
+            )
+
+        else:
+            # Default system prompt for all other styles — unchanged
+            system_prompt = (
+                f"You are an elite, professional scriptwriter for a high-end, slow-paced YouTube documentary channel. "
+                f"You write strictly in {language}. Your writing style is '{style}'. "
+                f"CRITICAL RULES: "
+                f"1. DO NOT SUMMARIZE. Write extremely long, detailed, and immersive paragraphs. "
+                f"2. Take your time. Describe the atmosphere, historical context, and deep emotional stakes of every single moment. "
+                f"3. Do not include visual cues, bracketed text, timestamps, or stage directions. Write ONLY the spoken voiceover dialogue. "
+                f"4. You MUST output a massive wall of text. Aim for maximum length."
+            )
+
+        # ---------------------------------------------------------------
+        # CONTEXT WINDOW — 500 words for high-retention styles, 100 for others
+        # ---------------------------------------------------------------
+        context_window = 500 if (IS_RUSSIAN_STORY or IS_FAMILY_DRAMA) else 100
 
         full_script = []
         last_paragraph = ""
 
         for part in range(1, total_parts + 1):
-            print(f"   > ⏳ Generating Part {part}/{total_parts} (Targeting heavy detail)...")
-            
-            if part == 1:
-                user_prompt = (
-                    f"Write the powerful, slow-building introduction and Part 1 of a 1-hour deep-dive video titled '{title}'. "
-                    f"Hook the viewer immediately, but do not rush the story. Paint a vivid picture of the world and the stakes. "
-                    f"Write a minimum of 600 words. Output only the spoken script in {language}."
-                )
-            elif part == total_parts:
-                user_prompt = (
-                    f"We are writing a video titled '{title}'. "
-                    f"Here is the end of the previous section to maintain flow:\n\"{last_paragraph}\"\n\n"
-                    f"Now, write the final Part {total_parts}. This is the grand conclusion. "
-                    f"Summarize the overarching lessons and wrap up the narrative powerfully. Include a subtle call to action to subscribe. "
-                    f"Write a minimum of 500 words. Output only the spoken script in {language}."
-                )
-            else:
-                user_prompt = (
-                    f"We are writing a 1-hour video titled '{title}'. "
-                    f"Here is the end of the previous section to maintain flow:\n\"{last_paragraph}\"\n\n"
-                    f"Continue the narrative seamlessly from exactly where that left off. Write Part {part}. "
-                    f"CRITICAL: Do NOT skip ahead. Expand heavily on the current scene or topic. "
-                    f"Dive deep into the philosophy, mechanics, or history of this specific moment. "
-                    f"Write a minimum of 600 words. Output only the spoken script in {language}."
-                )
+            print(f"   > ⏳ Generating Part {part}/{total_parts}...")
 
-            chunk_text = self._call_groq(system_prompt, user_prompt)
-            
+            # -----------------------------------------------------------
+            # SELECT SYSTEM PROMPT FOR THIS PART
+            # -----------------------------------------------------------
+            if IS_RUSSIAN_STORY or IS_FAMILY_DRAMA:
+                active_system = opening_system_prompt if part == 1 else continuation_system_prompt
+            else:
+                active_system = system_prompt
+
+            # -----------------------------------------------------------
+            # BUILD USER PROMPT
+            # -----------------------------------------------------------
+            if IS_RUSSIAN_STORY:
+                if part == 1:
+                    user_prompt = (
+                        f"Write the cold open for a true-crime/drama video titled '{title}'.\n"
+                        f"Hook: First 2 sentences must describe a shocking real-world incident involving a named person.\n"
+                        f"Twist: Sentences 3–5 must deliver an immediate plot reversal that changes everything.\n"
+                        f"Continue the scene with fast, factual dialogue and actions. No filler. No scene-setting monologues.\n"
+                        f"Minimum 500 words. Output only the spoken script in {language}."
+                    )
+                elif part == total_parts:
+                    user_prompt = (
+                        f"Here are the last {context_window} words of the previous chapter for continuity:\n"
+                        f"\"{last_paragraph}\"\n\n"
+                        f"Write the FINAL chapter. Resolve the story. Deliver the verdict, sentence, or outcome.\n"
+                        f"End with exactly one sentence asking viewers to like and subscribe.\n"
+                        f"Minimum 500 words. Output only the spoken script in {language}."
+                    )
+                else:
+                    user_prompt = (
+                        f"Here are the last {context_window} words of the previous chapter for continuity:\n"
+                        f"\"{last_paragraph}\"\n\n"
+                        f"Continue IMMEDIATELY from this point. No recap. No re-introduction of characters.\n"
+                        f"Write Chapter {part}: actions, raw dialogue, new conflict or revelation.\n"
+                        f"Minimum 500 words. Output only the spoken script in {language}."
+                    )
+            elif IS_FAMILY_DRAMA:
+                if part == 1:
+                    user_prompt = (
+                        f"Write the emotional opening scene of a family drama story titled '{title}'.\n"
+                        f"Hook: First 1-2 sentences must be a shocking, relatable revelation about a family relationship.\n"
+                        f"Immediately launch into a tense family conversation using realistic dialogue.\n"
+                        f"Introduce the key family members naturally through their words and actions — not through descriptions.\n"
+                        f"Minimum 500 words. Output only the spoken script in {language}."
+                    )
+                elif part == total_parts:
+                    user_prompt = (
+                        f"Here are the last {context_window} words of the previous chapter for continuity:\n"
+                        f"\"{last_paragraph}\"\n\n"
+                        f"Write the FINAL chapter of this family drama. Resolve the central conflict.\n"
+                        f"Show the emotional resolution through dialogue and character reactions.\n"
+                        f"End with one natural sentence inviting viewers to like and subscribe.\n"
+                        f"Minimum 500 words. Output only the spoken script in {language}."
+                    )
+                else:
+                    user_prompt = (
+                        f"Here are the last {context_window} words of the previous chapter for continuity:\n"
+                        f"\"{last_paragraph}\"\n\n"
+                        f"Continue IMMEDIATELY from this point. Do not recap or re-introduce family members.\n"
+                        f"Write Chapter {part}: a new confrontation, secret revealed, or emotional turning point — through dialogue.\n"
+                        f"Minimum 500 words. Output only the spoken script in {language}."
+                    )
+            else:
+                # Original user prompts — unchanged for all other styles
+                if part == 1:
+                    user_prompt = (
+                        f"Write the powerful, slow-building introduction and Part 1 of a 1-hour deep-dive video titled '{title}'. "
+                        f"Hook the viewer immediately, but do not rush the story. Paint a vivid picture of the world and the stakes. "
+                        f"Write a minimum of 600 words. Output only the spoken script in {language}."
+                    )
+                elif part == total_parts:
+                    user_prompt = (
+                        f"We are writing a video titled '{title}'. "
+                        f"Here is the end of the previous section to maintain flow:\n\"{last_paragraph}\"\n\n"
+                        f"Now, write the final Part {total_parts}. This is the grand conclusion. "
+                        f"Summarize the overarching lessons and wrap up the narrative powerfully. Include a subtle call to action to subscribe. "
+                        f"Write a minimum of 500 words. Output only the spoken script in {language}."
+                    )
+                else:
+                    user_prompt = (
+                        f"We are writing a 1-hour video titled '{title}'. "
+                        f"Here is the end of the previous section to maintain flow:\n\"{last_paragraph}\"\n\n"
+                        f"Continue the narrative seamlessly from exactly where that left off. Write Part {part}. "
+                        f"CRITICAL: Do NOT skip ahead. Expand heavily on the current scene or topic. "
+                        f"Dive deep into the philosophy, mechanics, or history of this specific moment. "
+                        f"Write a minimum of 600 words. Output only the spoken script in {language}."
+                    )
+
+            chunk_text = self._call_groq(active_system, user_prompt)
+
             if not chunk_text:
                 print("   > 🛑 FATAL: Script generation failed mid-way. Halting to save API credits.")
                 return None
 
             full_script.append(chunk_text)
-            
-            # Grab the last 100 words to feed into the next prompt for rock-solid continuity
-            words = chunk_text.split()
-            last_paragraph = " ".join(words[-100:]) if len(words) > 100 else chunk_text
 
-            # Sleep to respect rate limits and let the buffer breathe
+            # Grab context words from the end of this chunk for the next part
+            words = chunk_text.split()
+            last_paragraph = " ".join(words[-context_window:]) if len(words) > context_window else chunk_text
+
+            # Respect rate limits
             time.sleep(2)
 
         print("   > ✅ All parts generated successfully. Assembling master script...")
         master_script_text = "\n\n".join(full_script)
-        
+
         safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '_')).rstrip()
         output_file = os.path.join(SCRIPT_DIR, f"{safe_title.replace(' ', '_')}.txt")
-        
+
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(master_script_text)
-            
+
         print(f"   > 💾 Master Script saved locally to: {output_file}")
         return output_file
+
 
     def generate_youtube_metadata(self, script_text, language="English"):
         import json
         import re
         print(f"   > 🧠 Running AI metadata generator (Language: {language})...")
+
         system_prompt = (
-            f"You are a multilingual YouTube SEO expert. Read the video script and output a JSON object with exactly two keys: "
-            f"'title' (a highly engaging, click-worthy YouTube title under 70 characters) and "
-            f"'description' (a compelling SEO-optimized description of 150-200 words followed by 8-10 relevant hashtags on a new line). "
-            f"IMPORTANT LANGUAGE RULE: Write BOTH the title and description entirely in {language}. "
-            f"Use {language} words, grammar, and culturally relevant phrasing for {language}-speaking audiences. "
-            f"The hashtags must also be written in {language} where applicable (e.g. Arabic hashtags for Arabic, Urdu hashtags for Urdu). "
-            f"Embed the hashtags directly inside the 'description' value at the end, separated by newlines. "
-            f"CRITICAL: Output ONLY valid JSON. Do not include markdown code block formatting (like ```json), introduction, or conclusion."
+            f"You are an expert YouTube SEO metadata generator. "
+            f"Based on the provided video script, generate the following in {language}:\n\n"
+            f"1. A highly clickable, engaging Title (under 70 characters).\n"
+            f"2. A compelling Description structured in exactly 3 paragraphs:\n"
+            f"   - Paragraph 1: A strong hook summarizing the mystery or core conflict of the video.\n"
+            f"   - Paragraph 2: Additional context and intrigue without spoiling the ending.\n"
+            f"   - Paragraph 3: A call to action (e.g. Like, Subscribe, leave a Comment).\n"
+            f"3. Exactly 7 dynamic hashtags that perfectly match the specific genre, era, topic, "
+            f"and subject matter of THIS script. Do NOT use generic fallback tags like #Documentary or #History. "
+            f"Extract hashtags from the actual script content (characters, events, locations, themes).\n\n"
+            f"LANGUAGE RULE: Write the title, all 3 description paragraphs, and all hashtags entirely in {language}.\n\n"
+            f"Format your response strictly as a JSON object with exactly these three keys:\n"
+            f"{{\n"
+            f'  "title": "...",\n'
+            f'  "description": "paragraph1\\n\\nparagraph2\\n\\nparagraph3",\n'
+            f'  "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7"]\n'
+            f"}}\n\n"
+            f"CRITICAL: Output ONLY valid JSON. No markdown, no code fences, no extra text."
         )
 
-        # Take a subset of the script text if it is too long to fit in standard token limits
+        # Trim script to fit token limits (first 3000 words + last 1000 words)
         words = script_text.split()
         if len(words) > 4000:
-            prompt_text = " ".join(words[:3000]) + "\n... [Script truncated for brevity] ...\n" + " ".join(words[-1000:])
+            prompt_text = " ".join(words[:3000]) + "\n... [Script truncated] ...\n" + " ".join(words[-1000:])
         else:
             prompt_text = script_text
 
-        user_prompt = f"Video Script:\n{prompt_text}\n\nOutput ONLY raw JSON format with title and description (including hashtags) in {language}."
+        user_prompt = (
+            f"Video Script:\n{prompt_text}\n\n"
+            f"Output ONLY the raw JSON object with title, description (3 paragraphs), "
+            f"and 7 dynamic hashtags — all written in {language}."
+        )
 
         response = self._call_groq(system_prompt, user_prompt)
         if not response:
@@ -221,6 +366,7 @@ class LongFormScripter:
             return None
 
         try:
+            # Strip markdown fences if Groq wraps the response
             cleaned = response.strip()
             if cleaned.startswith("```"):
                 lines = cleaned.splitlines()
@@ -231,25 +377,57 @@ class LongFormScripter:
                 cleaned = "\n".join(lines).strip()
 
             data = json.loads(cleaned)
-            if "title" in data and "description" in data:
-                print(f"   > ✅ AI Metadata generated in {language}.")
-                return data
-            else:
-                print("   > ⚠️ Warning: JSON did not contain 'title' and 'description' keys.")
+
+            title = data.get("title", "").strip()
+            description = data.get("description", "").strip()
+            hashtags = data.get("hashtags", [])
+
+            if not title or not description:
+                print("   > ⚠️ Warning: JSON missing 'title' or 'description' keys.")
                 return None
+
+            # Sanitize hashtags: ensure each starts with #, strip whitespace
+            clean_tags = []
+            for tag in hashtags:
+                tag = str(tag).strip()
+                if not tag.startswith("#"):
+                    tag = "#" + tag
+                clean_tags.append(tag)
+
+            # Append hashtags to bottom of description for YouTube body text
+            if clean_tags:
+                hashtag_line = " ".join(clean_tags)
+                full_description = f"{description}\n\n{hashtag_line}"
+            else:
+                full_description = description
+
+            # Strip bare tag strings (e.g. "#tag") from the tags list to pass as
+            # YouTube API search tags (without the # prefix)
+            api_tags = [t.lstrip("#") for t in clean_tags]
+
+            print(f"   > ✅ AI Metadata generated in {language} | Tags: {', '.join(clean_tags)}")
+            return {
+                "title": title,
+                "description": full_description,
+                "tags": api_tags
+            }
+
         except Exception as e:
             print(f"   > ⚠️ Warning: Failed to parse metadata JSON: {e}. Raw response: {response}")
+            # Regex fallback — recover title and description at minimum
             try:
                 title_match = re.search(r'"title"\s*:\s*"([^"]+)"', response)
                 desc_match = re.search(r'"description"\s*:\s*"([^"]+)"', response)
                 if title_match and desc_match:
                     return {
                         "title": title_match.group(1),
-                        "description": desc_match.group(1).replace(r'\n', '\n')
+                        "description": desc_match.group(1).replace(r'\n', '\n'),
+                        "tags": []
                     }
-            except:
+            except Exception:
                 pass
             return None
+
 
 # --- STANDALONE TESTER ---
 if __name__ == "__main__":

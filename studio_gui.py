@@ -917,7 +917,7 @@ class IslamicReelsStudio(ctk.CTk):
         style_row.pack(fill="x", pady=10)
         ctk.CTkLabel(style_row, text="Script Style:").pack(side="left", padx=(10, 5))
         lf_style_var = ctk.StringVar(value=self.get_active_setting("lf_script_style", "Deep Emotional"))
-        ctk.CTkOptionMenu(style_row, variable=lf_style_var, values=["Deep Emotional", "Book Reading", "Historical Fact", "Tafseer Explanation"], width=200).pack(side="left", padx=5)
+        ctk.CTkOptionMenu(style_row, variable=lf_style_var, values=["Deep Emotional", "Book Reading", "Historical Fact", "Tafseer Explanation", "Russian Story (High Retention)", "Family Drama (High Retention)"], width=260).pack(side="left", padx=5)
 
         hw_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         hw_row.pack(fill="x", pady=10)
@@ -1135,11 +1135,14 @@ class IslamicReelsStudio(ctk.CTk):
             if metadata and metadata.get("title") and metadata.get("description"):
                 ai_title = metadata["title"]
                 ai_description = metadata["description"]
+                ai_tags = metadata.get("tags", [])
                 print(f"   > 🤖 Dynamic AI Metadata Generated:")
                 print(f"     - Title: {ai_title}")
+                print(f"     - Tags: {ai_tags}")
             else:
                 ai_title = title
-                ai_description = f"✨ {title}\n\nDon't forget to Like and Subscribe!\n\n#Documentary #LongForm #IslamicHistory"
+                ai_description = f"✨ {title}\n\nDon't forget to Like and Subscribe!"
+                ai_tags = []
                 print(f"   > ⚠️ Falling back to original queue metadata.")
 
             # 2. Audio Generation Checkpoint
@@ -1213,7 +1216,9 @@ class IslamicReelsStudio(ctk.CTk):
                 social_engine.upload_to_youtube(
                     vid_out, ai_title, ai_description, profile_yt_token,
                     thumbnail_path=image_path,
-                    progress_callback=self.update_upload_progress
+                    progress_callback=self.update_upload_progress,
+                    tags=ai_tags,
+                    language=settings.get("lf_main_language", "English")
                 )
                 print("[+] YouTube Upload Success")
                 

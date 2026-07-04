@@ -2,6 +2,23 @@ import os
 import sys
 import time
 
+# ---------------------------------------------------------------------------
+# Language → YouTube ISO code + geographic location mapping
+# Used to set defaultLanguage, defaultAudioLanguage, and recordingDetails
+# on every upload so YouTube's regional algorithm indexes the video correctly.
+# ---------------------------------------------------------------------------
+YOUTUBE_METADATA_MAP = {
+    "English": {"iso": "en", "desc": "United States",  "lat": 37.0902, "lng": -95.7129},
+    "Russian": {"iso": "ru", "desc": "Russia",          "lat": 61.5240, "lng": 105.3188},
+    "German":  {"iso": "de", "desc": "Germany",         "lat": 51.1657, "lng": 10.4515 },
+    "Arabic":  {"iso": "ar", "desc": "Saudi Arabia",    "lat": 23.8859, "lng": 45.0792 },
+    "Spanish": {"iso": "es", "desc": "Spain",           "lat": 40.4637, "lng": -3.7492 },
+    "French":  {"iso": "fr", "desc": "France",          "lat": 46.2276, "lng": 2.2137  },
+    "Urdu":    {"iso": "ur", "desc": "Pakistan",        "lat": 30.3753, "lng": 69.3451 },
+    "Hindi":   {"iso": "hi", "desc": "India",           "lat": 20.5937, "lng": 78.9629 },
+}
+# ---------------------------------------------------------------------------
+
 def get_authenticated_youtube_service(token_path):
     if not token_path:
         print("   > ❌ YT Error: No token path provided!")
@@ -93,7 +110,7 @@ def compress_thumbnail(image_path, max_size_bytes=2000000):
         print(f"   > ❌ Thumbnail compression failed: {e}. Using original image.")
         return image_path
 
-def upload_to_youtube(video_path, title, description, token_path, thumbnail_path=None, progress_callback=None):
+def upload_to_youtube(video_path, title, description, token_path, thumbnail_path=None, progress_callback=None, tags=None, language="English"):
     print(f"   > 🌐 Initiating YouTube Upload Module...")
     print(f"   > 🔐 Target Token Vault: {token_path}")
     
@@ -123,14 +140,32 @@ def upload_to_youtube(video_path, title, description, token_path, thumbnail_path
         clean_title = re.sub(r'#shorts\b', '', title, flags=re.IGNORECASE).strip()
         clean_description = re.sub(r'#shorts\b', '', description, flags=re.IGNORECASE).strip()
 
+        # Use AI-generated tags passed in from the metadata generator; no hardcoded fallbacks
+        youtube_tags = tags if isinstance(tags, list) and tags else []
+
+        meta = YOUTUBE_METADATA_MAP.get(language, YOUTUBE_METADATA_MAP["English"])
+        print(f"   > 🌍 Location Tag: {meta['desc']} | Language ISO: {meta['iso']}")
+
         body = {
-            'snippet': {
-                'title': clean_title,
-                'description': clean_description,
-                'tags': ['Documentary', 'History', 'IslamicHistory', 'Quran', 'Educational', 'LongForm'],
-                'categoryId': '27' # Education / Documentary Category
+            "snippet": {
+                "title": clean_title,
+                "description": clean_description,
+                "tags": youtube_tags,
+                "categoryId": "27",  # Education / Documentary
+                "defaultLanguage": meta["iso"],
+                "defaultAudioLanguage": meta["iso"]
             },
-            'status': {'privacyStatus': 'public', 'selfDeclaredMadeForKids': False}
+            "recordingDetails": {
+                "locationDescription": meta["desc"],
+                "location": {
+                    "latitude": meta["lat"],
+                    "longitude": meta["lng"]
+                }
+            },
+            "status": {
+                "privacyStatus": "public",
+                "selfDeclaredMadeForKids": False
+            }
         }
         from googleapiclient.http import MediaFileUpload
         # 10 MB chunks enable real-time progress reporting via next_chunk()
