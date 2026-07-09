@@ -169,7 +169,7 @@ def upload_to_youtube(video_path, title, description, token_path, thumbnail_path
         }
         from googleapiclient.http import MediaFileUpload
         # 10 MB chunks enable real-time progress reporting via next_chunk()
-        media = MediaFileUpload(video_path, chunksize=10 * 1024 * 1024, resumable=True)
+        media = MediaFileUpload(video_path, chunksize=1 * 1024 * 1024, resumable=True)
         import socket
         import http.client
 

@@ -1419,7 +1419,9 @@ class IslamicReelsStudio(ctk.CTk):
                     title, 
                     description, 
                     profile_yt_token, 
-                    thumbnail_path=thumbnail_path
+                    thumbnail_path=thumbnail_path,
+                    progress_callback=self.update_upload_progress,
+                    language=settings.get("lf_main_language", "English")
                 )
                 print("[+] YouTube Upload Success")
             except Exception as e:
