@@ -511,6 +511,16 @@ class IslamicReelsStudio(ctk.CTk):
     def populate_main_ui(self):
         gpu = self.get_active_setting("hardware_profile", "cpu")
         self.active_display.configure(text=f"Currently Managing: {self.active_profile} | GPU: {gpu.upper()}")
+        
+        # Keep manual script settings in sync when active profile changes
+        self.manual_script_path = self.get_active_setting("lf_manual_script_path", "")
+        try:
+            self.manual_script_entry.delete(0, "end")
+            if self.manual_script_path:
+                self.manual_script_entry.insert(0, self.manual_script_path)
+        except Exception:
+            pass
+        self.refresh_manual_script_ui()
 
     def backup_keys_to_db(self, profile_name, keys_vals):
         import sqlite3
