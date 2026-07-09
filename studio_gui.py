@@ -1185,6 +1185,13 @@ class IslamicReelsStudio(ctk.CTk):
             # 1. Script Generation Checkpoint
             print("[+] Beginning Script Generation")
 
+            from script_generator import LongFormScripter
+            scripter = LongFormScripter(
+                settings.get("groq_api_keys", []),
+                custom_length_enabled=settings.get("lf_custom_length_enabled", False),
+                target_minutes=int(settings.get("lf_target_minutes", 60))
+            )
+
             # --- MANUAL SCRIPT MODE OVERRIDE ---
             manual_mode = settings.get("lf_manual_script_enabled", False)
             manual_path = getattr(self, "manual_script_path", "").strip()
@@ -1203,12 +1210,7 @@ class IslamicReelsStudio(ctk.CTk):
                     return
             else:
                 # Normal Groq generation path
-                from script_generator import LongFormScripter
-                scripter = LongFormScripter(
-                    settings.get("groq_api_keys", []),
-                    custom_length_enabled=settings.get("lf_custom_length_enabled", False),
-                    target_minutes=int(settings.get("lf_target_minutes", 60))
-                )
+
                 if os.path.exists(script_file):
                     print(f"   > 📂 Smart Resume: Found existing script file: {script_file}. Bypassing generation.")
                     print("[+] Groq Script Created")
