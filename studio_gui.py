@@ -231,6 +231,26 @@ class IslamicReelsStudio(ctk.CTk):
         self.upload_pct_label = ctk.CTkLabel(upload_inner, text="Idle", font=ctk.CTkFont(size=13, weight="bold"), text_color="#A29BFE", width=90)
         self.upload_pct_label.pack(side="left")
 
+        # Manual Script Browse Row (enabled/disabled by lf_manual_script_enabled setting)
+        self.manual_script_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=12)
+        self.manual_script_card.pack(pady=(0, 6), padx=40, fill="x")
+        manual_inner = ctk.CTkFrame(self.manual_script_card, fg_color="transparent")
+        manual_inner.pack(fill="x", padx=20, pady=10)
+        ctk.CTkLabel(manual_inner, text="📄 Manual Script:", font=ctk.CTkFont(weight="bold", size=13)).pack(side="left", padx=(0, 10))
+        self.manual_script_entry = ctk.CTkEntry(manual_inner, placeholder_text="Select a .txt script file...", font=ctk.CTkFont(size=12))
+        self.manual_script_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.manual_script_browse_btn = ctk.CTkButton(
+            manual_inner, text="📁 Browse", width=100, height=30,
+            corner_radius=8, fg_color="#3A3E41", hover_color="#4A4E51",
+            command=self._browse_manual_script
+        )
+        self.manual_script_browse_btn.pack(side="right")
+        # Store selected path as instance variable
+        self.manual_script_path = self.get_active_setting("lf_manual_script_path", "")
+        if self.manual_script_path:
+            self.manual_script_entry.insert(0, self.manual_script_path)
+
+
         # Control and Action Buttons Card
         self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.btn_frame.pack(pady=(10, 20), padx=40, fill="x")
@@ -278,6 +298,9 @@ class IslamicReelsStudio(ctk.CTk):
                 print("   > 🥷 Booted by Windows Startup. Hiding in System Tray...")
                 self.after(100, self.hide_window)
 
+        # Set initial state of the Manual Script browse button
+        self.after(200, self.refresh_manual_script_ui)
+
     def update_upload_progress(self, pct):
         """Thread-safe progress bar updater — called from the background upload thread."""
         def _do_update():
@@ -299,6 +322,36 @@ class IslamicReelsStudio(ctk.CTk):
             self.upload_pct_label.configure(text="Idle", text_color="#A29BFE")
         except Exception:
             pass
+
+    def _browse_manual_script(self):
+        """Opens a file picker for .txt scripts and stores the selected path."""
+        from tkinter import filedialog
+        file_path = filedialog.askopenfilename(
+            title="Select Script File",
+            filetypes=[("Text Script Files", "*.txt"), ("All Files", "*.*")]
+        )
+        if file_path:
+            self.manual_script_path = file_path
+            self.set_active_setting("lf_manual_script_path", file_path)
+            self.save_settings()
+            try:
+                self.manual_script_entry.delete(0, "end")
+                self.manual_script_entry.insert(0, file_path)
+            except Exception:
+                pass
+            print(f"   > 📄 Manual script selected: {file_path}")
+
+    def refresh_manual_script_ui(self):
+        """Enables or disables the Browse button based on the lf_manual_script_enabled setting."""
+        try:
+            is_enabled = self.get_active_setting("lf_manual_script_enabled", False)
+            state = "normal" if is_enabled else "disabled"
+            fg = "#F39C12" if is_enabled else "#3A3E41"
+            self.manual_script_browse_btn.configure(state=state, fg_color=fg)
+            self.manual_script_entry.configure(state=state)
+        except Exception:
+            pass
+
 
     def probe_gpu(self):
 
@@ -420,7 +473,9 @@ class IslamicReelsStudio(ctk.CTk):
             "lf_bg_music_enabled": True,
             "lf_last_upload_time": 0,
             "hardware_profile": "cpu",
-            "lf_metadata_language": "English"
+            "lf_metadata_language": "English",
+            "lf_manual_script_enabled": False,
+            "lf_manual_script_path": ""
         }
 
     def load_settings(self):
@@ -813,10 +868,21 @@ class IslamicReelsStudio(ctk.CTk):
         lf_sub_toggle_row.pack(fill="x", pady=5)
         lf_subtitles_var = ctk.BooleanVar(value=self.get_active_setting("lf_subtitles_enabled", True))
         ctk.CTkSwitch(lf_sub_toggle_row, text="Enable Subtitles", variable=lf_subtitles_var).pack(side="left", padx=10)
-        
+
         # New Background Music Enable switch
         lf_bg_music_enabled_var = ctk.BooleanVar(value=self.get_active_setting("lf_bg_music_enabled", True))
         ctk.CTkSwitch(lf_sub_toggle_row, text="Enable Background Music Overlay", variable=lf_bg_music_enabled_var).pack(side="left", padx=10)
+
+        # Manual Script Mode toggle
+        lf_manual_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
+        lf_manual_row.pack(fill="x", pady=5)
+        lf_manual_script_var = ctk.BooleanVar(value=self.get_active_setting("lf_manual_script_enabled", False))
+        ctk.CTkSwitch(
+            lf_manual_row,
+            text="📄 Manual Script Mode  ← When ON: Browse button activates on dashboard. Groq generation is skipped.",
+            variable=lf_manual_script_var,
+            text_color="#F39C12"
+        ).pack(side="left", padx=10)
 
         lf_upl_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         lf_upl_row.pack(fill="x", pady=10)
@@ -981,6 +1047,9 @@ class IslamicReelsStudio(ctk.CTk):
             self.set_active_setting("lf_bg_music", lf_music_entry.get())
             self.set_active_setting("lf_hardware_mode", lf_hw_mode_var.get())
             self.set_active_setting("lf_metadata_language", lf_metadata_lang_var.get())
+            self.set_active_setting("lf_manual_script_enabled", lf_manual_script_var.get())
+            # Refresh the Browse button state on the main dashboard after saving
+            self.after(100, self.refresh_manual_script_ui)
             
             self.save_settings()
             self.start_discord_listener()
@@ -1103,28 +1172,48 @@ class IslamicReelsStudio(ctk.CTk):
             srt_out = os.path.join("lf_temp", f"subs_{safe_title}.srt")
             vid_out = os.path.join("lf_output", f"Final_LF_{safe_title}.mp4")
             
-            # 1. Script Generation Checkpoint (using Groq Keys rotation list)
-            print("[+] Beginning Groq Script Generation")
-            scripter = LongFormScripter(
-                settings.get("groq_api_keys", []),
-                custom_length_enabled=settings.get("lf_custom_length_enabled", False),
-                target_minutes=int(settings.get("lf_target_minutes", 60))
-            )
-            if os.path.exists(script_file):
-                print(f"   > 📂 Smart Resume: Found existing script file: {script_file}. Bypassing generation.")
-                print("[+] Groq Script Created")
+            # 1. Script Generation Checkpoint
+            print("[+] Beginning Script Generation")
+
+            # --- MANUAL SCRIPT MODE OVERRIDE ---
+            manual_mode = settings.get("lf_manual_script_enabled", False)
+            manual_path = getattr(self, "manual_script_path", "").strip()
+
+            if manual_mode:
+                if manual_path and os.path.exists(manual_path):
+                    import shutil
+                    os.makedirs(os.path.dirname(script_file) if os.path.dirname(script_file) else "lf_scripts", exist_ok=True)
+                    shutil.copy2(manual_path, script_file)
+                    print(f"   > 📄 Manual Script Mode ACTIVE: Using '{manual_path}'")
+                    print("   > ⚡ Groq script generation SKIPPED.")
+                    print("[+] Script Ready")
+                else:
+                    print("   > ❌ Manual Script Mode is ON but no valid .txt file is selected.")
+                    print("   > 📌 Please use the Browse button on the main dashboard to select a script.")
+                    return
             else:
-                script_file = scripter.generate_full_script(
-                    title=title, 
-                    language=settings.get("lf_main_language", "English"),
-                    style=settings.get("lf_script_style", "Deep Emotional")
+                # Normal Groq generation path
+                from script_generator import LongFormScripter
+                scripter = LongFormScripter(
+                    settings.get("groq_api_keys", []),
+                    custom_length_enabled=settings.get("lf_custom_length_enabled", False),
+                    target_minutes=int(settings.get("lf_target_minutes", 60))
                 )
-                if script_file and os.path.exists(script_file):
+                if os.path.exists(script_file):
+                    print(f"   > 📂 Smart Resume: Found existing script file: {script_file}. Bypassing generation.")
                     print("[+] Groq Script Created")
-                
-            if not script_file or not os.path.exists(script_file): 
-                print("   > ❌ Script file missing or failed. Will retry next cycle.")
-                return
+                else:
+                    script_file = scripter.generate_full_script(
+                        title=title,
+                        language=settings.get("lf_main_language", "English"),
+                        style=settings.get("lf_script_style", "Deep Emotional")
+                    )
+                    if script_file and os.path.exists(script_file):
+                        print("[+] Groq Script Created")
+
+                if not script_file or not os.path.exists(script_file):
+                    print("   > ❌ Script file missing or failed. Will retry next cycle.")
+                    return
 
             # Read script content to generate dynamic AI metadata
             metadata_language = settings.get("lf_metadata_language", "English")
