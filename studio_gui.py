@@ -464,7 +464,7 @@ class IslamicReelsStudio(ctk.CTk):
             "lf_target_minutes": 60,
             "lf_main_language": "English",
             "lf_subtitle_language": "Arabic",
-            "lf_voice_actor": "English (US) Male",
+            "lf_voice_actor": "English (US) Bella (Premium Female)",
             "lf_sub_size": "24",
             "lf_sub_color": "Yellow",
             "lf_sub_position": "Bottom",
@@ -914,20 +914,76 @@ class IslamicReelsStudio(ctk.CTk):
         voice_row.pack(fill="x", pady=10)
         
         ctk.CTkLabel(voice_row, text="Voice Actor (TTS):").pack(side="left", padx=(10, 5))
-        lf_voice_actor_var = ctk.StringVar(value=self.get_active_setting("lf_voice_actor", "English (US) Male"))
-        lf_voice_actor_menu = ctk.CTkOptionMenu(voice_row, variable=lf_voice_actor_var, values=[], width=180)
+        lf_voice_actor_var = ctk.StringVar(value=self.get_active_setting("lf_voice_actor", "English (US) Bella (Premium Female)"))
+        lf_voice_actor_menu = ctk.CTkOptionMenu(voice_row, variable=lf_voice_actor_var, values=[], width=220)
         lf_voice_actor_menu.pack(side="left", padx=5)
 
+        def play_test_voice():
+            voice_actor = lf_voice_actor_var.get()
+            print(f"[SYSTEM] Playing voice test for: {voice_actor}")
+            
+            def play_thread():
+                try:
+                    from audio_generator import VOICE_ACTORS, sync_generate_kokoro
+                    voice_code = VOICE_ACTORS.get(voice_actor, "af_bella")
+                    
+                    test_text = "Hello! This is a live voice test of the premium voice actor selected in the long-form engine."
+                    test_path = os.path.join(LF_TEMP, "voice_test.wav")
+                    
+                    sync_generate_kokoro(test_text, voice_code, test_path)
+                    
+                    import winsound
+                    winsound.PlaySound(test_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                except Exception as e:
+                    print(f"   > ❌ Voice Test Error: {e}")
+                    
+            threading.Thread(target=play_thread, daemon=True).start()
+
+        ctk.CTkButton(
+            voice_row, text="▶ Play Test", width=90, height=28,
+            corner_radius=6, fg_color="#2ECC71", hover_color="#27AE60",
+            command=play_test_voice
+        ).pack(side="left", padx=5)
+
+        # 12 premium voices for all languages
+        PREMIUM_VOICES_POOL = [
+            "Bella (Premium Female)",
+            "Sarah (Premium Female)",
+            "Nicole (Premium Female)",
+            "Sky (Premium Female)",
+            "Adam (Premium Male)",
+            "Michael (Premium Male)",
+            "Fenrir (Premium Male)",
+            "Puck (Premium Male)",
+            "Emma (Premium Female)",
+            "Isabella (Premium Female)",
+            "George (Premium Male)",
+            "Lewis (Premium Male)"
+        ]
+
         VOICE_ACTORS_BY_LANG = {
-            "English": ["English (US) Male", "English (US) Female", "English (UK) Male", "English (UK) Female"],
-            "German": ["German Male", "German Female"],
-            "Russian": ["Russian Male", "Russian Female"],
-            "Arabic": ["Arabic Male", "Arabic Female"],
-            "Urdu": ["Urdu Male", "Urdu Female"]
+            "English": [
+                "English (US) Bella (Premium Female)",
+                "English (US) Sarah (Premium Female)",
+                "English (US) Nicole (Premium Female)",
+                "English (US) Sky (Premium Female)",
+                "English (US) Adam (Premium Male)",
+                "English (US) Michael (Premium Male)",
+                "English (US) Fenrir (Premium Male)",
+                "English (US) Puck (Premium Male)",
+                "English (UK) Emma (Premium Female)",
+                "English (UK) Isabella (Premium Female)",
+                "English (UK) George (Premium Male)",
+                "English (UK) Lewis (Premium Male)"
+            ],
+            "German": [f"German {v}" for v in PREMIUM_VOICES_POOL],
+            "Russian": [f"Russian {v}" for v in PREMIUM_VOICES_POOL],
+            "Arabic": [f"Arabic {v}" for v in PREMIUM_VOICES_POOL],
+            "Urdu": [f"Urdu {v}" for v in PREMIUM_VOICES_POOL]
         }
 
         def update_voice_menu(selected_lang):
-            voices = VOICE_ACTORS_BY_LANG.get(selected_lang, ["English (US) Male"])
+            voices = VOICE_ACTORS_BY_LANG.get(selected_lang, ["English (US) Bella (Premium Female)"])
             lf_voice_actor_menu.configure(values=voices)
             current_voice = lf_voice_actor_var.get()
             if current_voice not in voices:

@@ -23,6 +23,7 @@ if not os.path.exists(FFMPEG_PATH):
 import asyncio
 import subprocess
 import imageio_ffmpeg
+import psutil
 import numpy as np
 import soundfile as sf
 from kokoro import KPipeline
@@ -60,29 +61,88 @@ def sync_generate_kokoro(text, voice, output_path):
     full_audio = np.concatenate(audio_chunks)
     sf.write(output_path, full_audio, 24000)
 
-# Map Voice Actors to Kokoro Neural Voices
+# Map Voice Actors to Kokoro Neural Voices (12 premium voices mapped for each language)
 VOICE_ACTORS = {
-    "English (US) Male": "am_adam",
-    "English (US) Female": "af_sarah",
-    "English (UK) Male": "bm_george",
-    "English (UK) Female": "bf_emma",
-    "German Male": "am_adam",
-    "German Female": "af_sarah",
-    "Russian Male": "am_adam",
-    "Russian Female": "af_sarah",
-    "Arabic Male": "am_adam",
-    "Arabic Female": "af_sarah",
-    "Urdu Male": "am_adam",
-    "Urdu Female": "af_sarah"
+    # English (US)
+    "English (US) Bella (Premium Female)": "af_bella",
+    "English (US) Sarah (Premium Female)": "af_sarah",
+    "English (US) Nicole (Premium Female)": "af_nicole",
+    "English (US) Sky (Premium Female)": "af_sky",
+    "English (US) Adam (Premium Male)": "am_adam",
+    "English (US) Michael (Premium Male)": "am_michael",
+    "English (US) Fenrir (Premium Male)": "am_fenrir",
+    "English (US) Puck (Premium Male)": "am_puck",
+    
+    # English (UK)
+    "English (UK) Emma (Premium Female)": "bf_emma",
+    "English (UK) Isabella (Premium Female)": "bf_isabella",
+    "English (UK) George (Premium Male)": "bm_george",
+    "English (UK) Lewis (Premium Male)": "bm_lewis",
+
+    # German
+    "German Bella (Premium Female)": "af_bella",
+    "German Sarah (Premium Female)": "af_sarah",
+    "German Nicole (Premium Female)": "af_nicole",
+    "German Sky (Premium Female)": "af_sky",
+    "German Emma (Premium Female)": "bf_emma",
+    "German Isabella (Premium Female)": "bf_isabella",
+    "German Adam (Premium Male)": "am_adam",
+    "German Michael (Premium Male)": "am_michael",
+    "German George (Premium Male)": "bm_george",
+    "German Lewis (Premium Male)": "bm_lewis",
+    "German Fenrir (Premium Male)": "am_fenrir",
+    "German Puck (Premium Male)": "am_puck",
+
+    # Russian
+    "Russian Bella (Premium Female)": "af_bella",
+    "Russian Sarah (Premium Female)": "af_sarah",
+    "Russian Nicole (Premium Female)": "af_nicole",
+    "Russian Sky (Premium Female)": "af_sky",
+    "Russian Emma (Premium Female)": "bf_emma",
+    "Russian Isabella (Premium Female)": "bf_isabella",
+    "Russian Adam (Premium Male)": "am_adam",
+    "Russian Michael (Premium Male)": "am_michael",
+    "Russian George (Premium Male)": "bm_george",
+    "Russian Lewis (Premium Male)": "bm_lewis",
+    "Russian Fenrir (Premium Male)": "am_fenrir",
+    "Russian Puck (Premium Male)": "am_puck",
+
+    # Arabic
+    "Arabic Bella (Premium Female)": "af_bella",
+    "Arabic Sarah (Premium Female)": "af_sarah",
+    "Arabic Nicole (Premium Female)": "af_nicole",
+    "Arabic Sky (Premium Female)": "af_sky",
+    "Arabic Emma (Premium Female)": "bf_emma",
+    "Arabic Isabella (Premium Female)": "bf_isabella",
+    "Arabic Adam (Premium Male)": "am_adam",
+    "Arabic Michael (Premium Male)": "am_michael",
+    "Arabic George (Premium Male)": "bm_george",
+    "Arabic Lewis (Premium Male)": "bm_lewis",
+    "Arabic Fenrir (Premium Male)": "am_fenrir",
+    "Arabic Puck (Premium Male)": "am_puck",
+
+    # Urdu
+    "Urdu Bella (Premium Female)": "af_bella",
+    "Urdu Sarah (Premium Female)": "af_sarah",
+    "Urdu Nicole (Premium Female)": "af_nicole",
+    "Urdu Sky (Premium Female)": "af_sky",
+    "Urdu Emma (Premium Female)": "bf_emma",
+    "Urdu Isabella (Premium Female)": "bf_isabella",
+    "Urdu Adam (Premium Male)": "am_adam",
+    "Urdu Michael (Premium Male)": "am_michael",
+    "Urdu George (Premium Male)": "bm_george",
+    "Urdu Lewis (Premium Male)": "bm_lewis",
+    "Urdu Fenrir (Premium Male)": "am_fenrir",
+    "Urdu Puck (Premium Male)": "am_puck"
 }
 
 # Map UI languages to defaults
 TTS_VOICES = {
-    "English": "af_sarah",
-    "Arabic": "af_sarah",
-    "German": "af_sarah",
-    "Russian": "af_sarah",
-    "Urdu": "af_sarah"
+    "English": "af_bella",
+    "Arabic": "af_bella",
+    "German": "af_bella",
+    "Russian": "af_bella",
+    "Urdu": "af_bella"
 }
 
 # Map Language Names to 2-letter ISO Codes for Whisper
@@ -112,23 +172,33 @@ async def generate_tts(text_file, language, output_audio_path, voice_actor=None)
         print("   > ⚠️ Script is empty. No TTS generated.")
         return False
 
-    temp_files = []
-    max_retries = 5
+    all_expected_files = [os.path.join(TEMP_DIR, f"temp_chunk_{i}.wav") for i in range(total)]
 
     print("\n" + "="*50)
     print("🎙️  ACTIVE TTS ENGINE: KOKORO (Local PyTorch) 🧠")
     print("="*50 + "\n")
     
-    try:
-        for i, chunk_text in enumerate(chunks):
-            percent = int((i / total) * 100)
+    # Scale concurrency dynamically to utilize maximum system resources (up to 24 workers)
+    logical_cores = psutil.cpu_count(logical=True) or 8
+    concurrency_limit = max(8, min(logical_cores, 24))
+    print(f"   > ⚡ Scaling TTS Concurrency Pool: {concurrency_limit} concurrent workers (Max resource usage)")
+
+    sem = asyncio.Semaphore(concurrency_limit)
+    completed_chunks = 0
+    progress_lock = asyncio.Lock()
+    max_retries = 5
+
+    async def print_progress():
+        async with progress_lock:
+            percent = int((completed_chunks / total) * 100)
             bar_length = 20
-            filled = int(bar_length * i / total)
+            filled = int(bar_length * completed_chunks / total)
             empty = bar_length - filled
-            print(f"\r   > 🎙️ TTS Progress: [{'█' * filled}{'░' * empty}] {percent}% (Chunk {i+1}/{total})", end="", flush=True)
-            
-            chunk_file = os.path.join(TEMP_DIR, f"temp_chunk_{i}.wav")
-            
+            print(f"\r   > 🎙️ TTS Progress: [{'█' * filled}{'░' * empty}] {percent}% ({completed_chunks}/{total})", end="", flush=True)
+
+    async def generate_chunk_task(index, chunk_text):
+        async with sem:
+            chunk_file = all_expected_files[index]
             success = False
             for attempt in range(max_retries):
                 try:
@@ -136,20 +206,30 @@ async def generate_tts(text_file, language, output_audio_path, voice_actor=None)
                     success = True
                     break
                 except Exception as e:
-                    print(f"\n   > ⚠️ Kokoro TTS Error on chunk {i+1} attempt {attempt + 1}/{max_retries}: {e}")
+                    print(f"\n   > ⚠️ Kokoro TTS Error on chunk {index+1} attempt {attempt + 1}/{max_retries}: {e}")
                     if attempt < max_retries - 1:
-                        print("   > ⏳ Retrying in 2 seconds...")
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(1)
                     else:
                         print("   > ❌ Fatal: Kokoro TTS failed after maximum retries.")
                         raise e
-            
             if success:
-                temp_files.append(chunk_file)
+                nonlocal completed_chunks
+                completed_chunks += 1
+                await print_progress()
+                return index, chunk_file
             else:
-                raise RuntimeError(f"Failed to generate TTS for chunk {i+1}")
+                raise RuntimeError(f"Failed to generate TTS for chunk {index+1}")
 
-        print(f"\r   > 🎙️ TTS Progress: [{'█' * bar_length}] 100% (Chunk {total}/{total})", flush=True)
+    try:
+        # Run all generation tasks concurrently
+        tasks = [generate_chunk_task(i, chunk) for i, chunk in enumerate(chunks)]
+        results = await asyncio.gather(*tasks)
+        
+        # Sort results by index to guarantee correct narrative order
+        results.sort(key=lambda x: x[0])
+        temp_files = [r[1] for r in results]
+
+        print(f"\r   > 🎙️ TTS Progress: [{'█' * 20}] 100% ({total}/{total})", flush=True)
 
         # Concatenate using ffmpeg concat demuxer
         print("   > 🔗 Concatenating TTS audio chunks...")
@@ -181,7 +261,7 @@ async def generate_tts(text_file, language, output_audio_path, voice_actor=None)
         if 'list_file_path' in locals() and os.path.exists(list_file_path):
             try: os.remove(list_file_path)
             except: pass
-        for tf in temp_files:
+        for tf in all_expected_files:
             if os.path.exists(tf):
                 try: os.remove(tf)
                 except: pass
