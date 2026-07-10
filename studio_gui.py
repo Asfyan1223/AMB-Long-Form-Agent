@@ -945,12 +945,13 @@ class IslamicReelsStudio(ctk.CTk):
             command=play_test_voice
         ).pack(side="left", padx=5)
 
-        # 12 premium voices for all languages
+        # 13 premium voices for all languages
         PREMIUM_VOICES_POOL = [
             "Bella (Premium Female)",
             "Sarah (Premium Female)",
             "Nicole (Premium Female)",
             "Sky (Premium Female)",
+            "Heart (Premium Female)",
             "Adam (Premium Male)",
             "Michael (Premium Male)",
             "Fenrir (Premium Male)",
@@ -967,6 +968,7 @@ class IslamicReelsStudio(ctk.CTk):
                 "English (US) Sarah (Premium Female)",
                 "English (US) Nicole (Premium Female)",
                 "English (US) Sky (Premium Female)",
+                "English (US) Heart (Premium Female)",
                 "English (US) Adam (Premium Male)",
                 "English (US) Michael (Premium Male)",
                 "English (US) Fenrir (Premium Male)",

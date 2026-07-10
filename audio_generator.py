@@ -61,13 +61,14 @@ def sync_generate_kokoro(text, voice, output_path):
     full_audio = np.concatenate(audio_chunks)
     sf.write(output_path, full_audio, 24000)
 
-# Map Voice Actors to Kokoro Neural Voices (12 premium voices mapped for each language)
+# Map Voice Actors to Kokoro Neural Voices (13 premium voices mapped for each language)
 VOICE_ACTORS = {
     # English (US)
     "English (US) Bella (Premium Female)": "af_bella",
     "English (US) Sarah (Premium Female)": "af_sarah",
     "English (US) Nicole (Premium Female)": "af_nicole",
     "English (US) Sky (Premium Female)": "af_sky",
+    "English (US) Heart (Premium Female)": "af_heart",
     "English (US) Adam (Premium Male)": "am_adam",
     "English (US) Michael (Premium Male)": "am_michael",
     "English (US) Fenrir (Premium Male)": "am_fenrir",
@@ -84,6 +85,7 @@ VOICE_ACTORS = {
     "German Sarah (Premium Female)": "af_sarah",
     "German Nicole (Premium Female)": "af_nicole",
     "German Sky (Premium Female)": "af_sky",
+    "German Heart (Premium Female)": "af_heart",
     "German Emma (Premium Female)": "bf_emma",
     "German Isabella (Premium Female)": "bf_isabella",
     "German Adam (Premium Male)": "am_adam",
@@ -98,6 +100,7 @@ VOICE_ACTORS = {
     "Russian Sarah (Premium Female)": "af_sarah",
     "Russian Nicole (Premium Female)": "af_nicole",
     "Russian Sky (Premium Female)": "af_sky",
+    "Russian Heart (Premium Female)": "af_heart",
     "Russian Emma (Premium Female)": "bf_emma",
     "Russian Isabella (Premium Female)": "bf_isabella",
     "Russian Adam (Premium Male)": "am_adam",
@@ -112,6 +115,7 @@ VOICE_ACTORS = {
     "Arabic Sarah (Premium Female)": "af_sarah",
     "Arabic Nicole (Premium Female)": "af_nicole",
     "Arabic Sky (Premium Female)": "af_sky",
+    "Arabic Heart (Premium Female)": "af_heart",
     "Arabic Emma (Premium Female)": "bf_emma",
     "Arabic Isabella (Premium Female)": "bf_isabella",
     "Arabic Adam (Premium Male)": "am_adam",
@@ -126,6 +130,7 @@ VOICE_ACTORS = {
     "Urdu Sarah (Premium Female)": "af_sarah",
     "Urdu Nicole (Premium Female)": "af_nicole",
     "Urdu Sky (Premium Female)": "af_sky",
+    "Urdu Heart (Premium Female)": "af_heart",
     "Urdu Emma (Premium Female)": "bf_emma",
     "Urdu Isabella (Premium Female)": "bf_isabella",
     "Urdu Adam (Premium Male)": "am_adam",
