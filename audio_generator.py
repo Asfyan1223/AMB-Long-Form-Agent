@@ -22,35 +22,67 @@ if not os.path.exists(FFMPEG_PATH):
 
 import asyncio
 import subprocess
-import edge_tts
 import imageio_ffmpeg
+import numpy as np
+import soundfile as sf
+from kokoro import KPipeline
 
 TEMP_DIR = os.path.join(os.getcwd(), "lf_temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Map Voice Actors to edge_tts Neural Voices
+# Initialize globally to avoid 10-second load time on every request
+# We use 'a' by default (American English). We lazy-load 'b' (British English) if needed.
+pipeline_a = KPipeline(lang_code='a')
+pipeline_b = None
+
+def get_pipeline(voice):
+    global pipeline_b
+    if voice.startswith('b'):
+        if pipeline_b is None:
+            print("   > 🚀 Initializing British English Kokoro Pipeline...")
+            pipeline_b = KPipeline(lang_code='b')
+        return pipeline_b
+    return pipeline_a
+
+def sync_generate_kokoro(text, voice, output_path):
+    """Synchronously generates audio from text using Kokoro pipeline and soundfile."""
+    active_pipeline = get_pipeline(voice)
+    generator = active_pipeline(text, voice=voice, speed=1.0)
+    
+    audio_chunks = []
+    for gs, ps, audio in generator:
+        if audio is not None and len(audio) > 0:
+            audio_chunks.append(audio)
+            
+    if not audio_chunks:
+        raise RuntimeError("Kokoro generated no audio data.")
+        
+    full_audio = np.concatenate(audio_chunks)
+    sf.write(output_path, full_audio, 24000)
+
+# Map Voice Actors to Kokoro Neural Voices
 VOICE_ACTORS = {
-    "English (US) Male": "en-US-ChristopherNeural",
-    "English (US) Female": "en-US-EmmaNeural",
-    "English (UK) Male": "en-GB-RyanNeural",
-    "English (UK) Female": "en-GB-SoniaNeural",
-    "German Male": "de-DE-KillianNeural",
-    "German Female": "de-DE-KatjaNeural",
-    "Russian Male": "ru-RU-DmitryNeural",
-    "Russian Female": "ru-RU-SvetlanaNeural",
-    "Arabic Male": "ar-AE-HamdanNeural",
-    "Arabic Female": "ar-AE-FatimaNeural",
-    "Urdu Male": "ur-PK-AsadNeural",
-    "Urdu Female": "ur-PK-UzmaNeural"
+    "English (US) Male": "am_adam",
+    "English (US) Female": "af_sarah",
+    "English (UK) Male": "bm_george",
+    "English (UK) Female": "bf_emma",
+    "German Male": "am_adam",
+    "German Female": "af_sarah",
+    "Russian Male": "am_adam",
+    "Russian Female": "af_sarah",
+    "Arabic Male": "am_adam",
+    "Arabic Female": "af_sarah",
+    "Urdu Male": "am_adam",
+    "Urdu Female": "af_sarah"
 }
 
-# Map UI languages to Edge TTS Voices (defaults)
+# Map UI languages to defaults
 TTS_VOICES = {
-    "English": "en-US-ChristopherNeural",
-    "Arabic": "ar-AE-HamdanNeural",
-    "German": "de-DE-KillianNeural",
-    "Russian": "ru-RU-DmitryNeural",
-    "Urdu": "ur-PK-AsadNeural"
+    "English": "af_sarah",
+    "Arabic": "af_sarah",
+    "German": "af_sarah",
+    "Russian": "af_sarah",
+    "Urdu": "af_sarah"
 }
 
 # Map Language Names to 2-letter ISO Codes for Whisper
@@ -61,6 +93,7 @@ LANG_CODES = {
     "Arabic": "ar",
     "Urdu": "ur"
 }
+
 
 async def generate_tts(text_file, language, output_audio_path, voice_actor=None):
     # Select voice actor or fallback to language default
@@ -81,6 +114,10 @@ async def generate_tts(text_file, language, output_audio_path, voice_actor=None)
 
     temp_files = []
     max_retries = 5
+
+    print("\n" + "="*50)
+    print("🎙️  ACTIVE TTS ENGINE: KOKORO (Local PyTorch) 🧠")
+    print("="*50 + "\n")
     
     try:
         for i, chunk_text in enumerate(chunks):
@@ -90,22 +127,21 @@ async def generate_tts(text_file, language, output_audio_path, voice_actor=None)
             empty = bar_length - filled
             print(f"\r   > 🎙️ TTS Progress: [{'█' * filled}{'░' * empty}] {percent}% (Chunk {i+1}/{total})", end="", flush=True)
             
-            chunk_file = os.path.join(TEMP_DIR, f"temp_chunk_{i}.mp3")
+            chunk_file = os.path.join(TEMP_DIR, f"temp_chunk_{i}.wav")
             
             success = False
             for attempt in range(max_retries):
                 try:
-                    communicate = edge_tts.Communicate(chunk_text, voice)
-                    await communicate.save(chunk_file)
+                    await asyncio.to_thread(sync_generate_kokoro, chunk_text, voice, chunk_file)
                     success = True
                     break
                 except Exception as e:
-                    print(f"\n   > ⚠️ Edge TTS Connection Error on chunk {i+1} attempt {attempt + 1}/{max_retries}: {e}")
+                    print(f"\n   > ⚠️ Kokoro TTS Error on chunk {i+1} attempt {attempt + 1}/{max_retries}: {e}")
                     if attempt < max_retries - 1:
-                        print("   > ⏳ Retrying connection in 10 seconds...")
-                        await asyncio.sleep(10)
+                        print("   > ⏳ Retrying in 2 seconds...")
+                        await asyncio.sleep(2)
                     else:
-                        print("   > ❌ Fatal: Edge TTS failed after maximum retries.")
+                        print("   > ❌ Fatal: Kokoro TTS failed after maximum retries.")
                         raise e
             
             if success:
@@ -129,7 +165,6 @@ async def generate_tts(text_file, language, output_audio_path, voice_actor=None)
             '-f', 'concat',
             '-safe', '0',
             '-i', list_file_path,
-            '-c', 'copy',
             '-y', output_audio_path
         ]
         

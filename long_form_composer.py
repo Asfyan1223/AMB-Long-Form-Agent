@@ -30,7 +30,6 @@ if not os.path.exists(FFMPEG_PATH):
 
 import asyncio
 import subprocess
-import edge_tts
 import imageio_ffmpeg
 import math
 import psutil
