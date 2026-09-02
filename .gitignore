@@ -25,3 +25,7 @@ credentials/
 Assest/
 backgrounds/
 font/
+
+venv/
+__pycache__/
+*.pyc

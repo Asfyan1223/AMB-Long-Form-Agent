@@ -24,42 +24,70 @@ import asyncio
 import subprocess
 import imageio_ffmpeg
 import psutil
+import torch
 import numpy as np
 import soundfile as sf
 from kokoro import KPipeline
 
+# Maximize PyTorch CPU intra-op multi-threading
+_num_cores = psutil.cpu_count(logical=True) or 4
+torch.set_num_threads(_num_cores)
+
 TEMP_DIR = os.path.join(os.getcwd(), "lf_temp")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Initialize globally to avoid 10-second load time on every request
-# We use 'a' by default (American English). We lazy-load 'b' (British English) if needed.
-pipeline_a = KPipeline(lang_code='a')
+import gc
+import threading
+
+def init_kokoro_pipeline(lang_code):
+    """Initializes Kokoro KPipeline on GPU if available, or multi-core optimized CPU."""
+    if torch.cuda.is_available():
+        try:
+            p = KPipeline(lang_code=lang_code, device="cuda")
+            print(f"   > 🚀 Kokoro Neural TTS loaded on GPU ({torch.cuda.get_device_name(0)})")
+            return p
+        except Exception as e:
+            print(f"   > ℹ️ Kokoro GPU acceleration unavailable for this device ({e}). Using optimized Multi-Core CPU mode.")
+    return KPipeline(lang_code=lang_code, device="cpu")
+
+# Lazy-loaded pipeline instances
+pipeline_a = None
 pipeline_b = None
 
 def get_pipeline(voice):
-    global pipeline_b
+    global pipeline_a, pipeline_b
     if voice.startswith('b'):
         if pipeline_b is None:
             print("   > 🚀 Initializing British English Kokoro Pipeline...")
-            pipeline_b = KPipeline(lang_code='b')
+            pipeline_b = init_kokoro_pipeline('b')
         return pipeline_b
+    if pipeline_a is None:
+        pipeline_a = init_kokoro_pipeline('a')
     return pipeline_a
 
+# Threading lock to prevent multi-thread C-library race conditions in espeak/misaki
+_pipeline_lock = threading.Lock()
+
 def sync_generate_kokoro(text, voice, output_path):
-    """Synchronously generates audio from text using Kokoro pipeline and soundfile."""
-    active_pipeline = get_pipeline(voice)
-    generator = active_pipeline(text, voice=voice, speed=1.0)
-    
-    audio_chunks = []
-    for gs, ps, audio in generator:
-        if audio is not None and len(audio) > 0:
-            audio_chunks.append(audio)
+    """Synchronously generates audio from text using Kokoro pipeline with optimized PyTorch inference and thread safety."""
+    with _pipeline_lock:
+        active_pipeline = get_pipeline(voice)
+        with torch.inference_mode():
+            generator = active_pipeline(text, voice=voice, speed=1.0)
             
-    if not audio_chunks:
-        raise RuntimeError("Kokoro generated no audio data.")
-        
-    full_audio = np.concatenate(audio_chunks)
-    sf.write(output_path, full_audio, 24000)
+            audio_chunks = []
+            for gs, ps, audio in generator:
+                if audio is not None and len(audio) > 0:
+                    audio_chunks.append(audio)
+                    
+            if not audio_chunks:
+                raise RuntimeError("Kokoro generated no audio data.")
+                
+            full_audio = np.concatenate(audio_chunks)
+            sf.write(output_path, full_audio, 24000)
+            
+            del audio_chunks
+            del full_audio
 
 # Map Voice Actors to Kokoro Neural Voices (13 premium voices mapped for each language)
 VOICE_ACTORS = {
@@ -160,7 +188,41 @@ LANG_CODES = {
 }
 
 
-async def generate_tts(text_file, language, output_audio_path, voice_actor=None):
+def split_script_into_chunks(text, max_chunk_words=100):
+    """Splits text into natural bite-sized chunks by paragraph or sentence for fast Kokoro processing."""
+    import re
+    raw_paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    if not raw_paragraphs and text.strip():
+        raw_paragraphs = [text.strip()]
+        
+    chunks = []
+    for p in raw_paragraphs:
+        words = p.split()
+        if len(words) <= max_chunk_words:
+            chunks.append(p)
+        else:
+            # Split paragraph into sentences by punctuation (. ! ? \n or Urdu/Arabic ۔)
+            sentences = re.split(r'(?<=[.!?۔\n])\s+', p)
+            current_chunk = []
+            current_count = 0
+            for s in sentences:
+                s_strip = s.strip()
+                if not s_strip:
+                    continue
+                s_words = len(s_strip.split())
+                if current_count + s_words > max_chunk_words and current_chunk:
+                    chunks.append(" ".join(current_chunk))
+                    current_chunk = [s_strip]
+                    current_count = s_words
+                else:
+                    current_chunk.append(s_strip)
+                    current_count += s_words
+            if current_chunk:
+                chunks.append(" ".join(current_chunk))
+                
+    return chunks if chunks else ([text.strip()] if text.strip() else [])
+
+async def generate_tts(text_file, language, output_audio_path, voice_actor=None, progress_callback=None):
     # Select voice actor or fallback to language default
     if voice_actor in VOICE_ACTORS:
         voice = VOICE_ACTORS[voice_actor]
@@ -171,7 +233,7 @@ async def generate_tts(text_file, language, output_audio_path, voice_actor=None)
     with open(text_file, 'r', encoding='utf-8') as f:
         script_text = f.read()
     
-    chunks = [c.strip() for c in script_text.split('\n\n') if c.strip()]
+    chunks = split_script_into_chunks(script_text, max_chunk_words=80)
     total = len(chunks)
     if not chunks:
         print("   > ⚠️ Script is empty. No TTS generated.")
@@ -183,10 +245,10 @@ async def generate_tts(text_file, language, output_audio_path, voice_actor=None)
     print("🎙️  ACTIVE TTS ENGINE: KOKORO (Local PyTorch) 🧠")
     print("="*50 + "\n")
     
-    # Scale concurrency dynamically to utilize maximum system resources (up to 24 workers)
-    logical_cores = psutil.cpu_count(logical=True) or 8
-    concurrency_limit = max(8, min(logical_cores, 24))
-    print(f"   > ⚡ Scaling TTS Concurrency Pool: {concurrency_limit} concurrent workers (Max resource usage)")
+    # Scale concurrency dynamically to utilize maximum system CPU cores efficiently
+    logical_cores = psutil.cpu_count(logical=True) or 4
+    concurrency_limit = max(2, min(logical_cores, 6))
+    print(f"   > ⚡ Scaling TTS Concurrency Pool: {concurrency_limit} concurrent workers (Torch threads: {_num_cores})")
 
     sem = asyncio.Semaphore(concurrency_limit)
     completed_chunks = 0
@@ -196,10 +258,12 @@ async def generate_tts(text_file, language, output_audio_path, voice_actor=None)
     async def print_progress():
         async with progress_lock:
             percent = int((completed_chunks / total) * 100)
-            bar_length = 20
+            bar_length = 15
             filled = int(bar_length * completed_chunks / total)
             empty = bar_length - filled
-            print(f"\r   > 🎙️ TTS Progress: [{'█' * filled}{'░' * empty}] {percent}% ({completed_chunks}/{total})", end="", flush=True)
+            print(f"[+] 🎙️ Kokoro TTS Progress: [{'█' * filled}{'░' * empty}] {percent}% ({completed_chunks}/{total} Chunks Done)")
+            if progress_callback:
+                progress_callback(percent, f"TTS Voiceover ({completed_chunks}/{total})")
 
     async def generate_chunk_task(index, chunk_text):
         async with sem:

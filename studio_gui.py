@@ -112,9 +112,9 @@ class RedirectText:
             lower_line = line.lower()
             show_in_gui = False
             
-            if any(prefix in line for prefix in ["[+]", "[x]", "[SYSTEM]", "✅", "🎬", "🚀", "[!]"]):
+            if any(prefix in line for prefix in ["[+]", "[x]", "[SYSTEM]", "✅", "🎬", "🚀", "[!]", "🎙️", "⏳", "⚡", "🧠", "🔗", "⚙️", "🎵", "📄", "💾", "⚠️", "❌", ">"]):
                 show_in_gui = True
-            elif any(keyword in lower_line for keyword in ["error", "halted", "pipeline", "initiating", "cooldown", "retrying"]):
+            elif any(keyword in lower_line for keyword in ["error", "halted", "pipeline", "initiating", "cooldown", "retrying", "progress", "chunk", "tts", "kokoro", "whisper", "transcrib", "render", "ffmpeg"]):
                 show_in_gui = True
             elif "cycle complete" in lower_line or "logged successful" in lower_line:
                 show_in_gui = True
@@ -219,16 +219,17 @@ class IslamicReelsStudio(ctk.CTk):
         self.log_textbox.configure(state="disabled")
         sys.stdout = RedirectText(self.log_textbox, self)
 
-        # Upload Progress Bar Card
+        # Multi-Stage Task Progress Bar Card
         self.upload_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=12)
         self.upload_card.pack(pady=(0, 6), padx=40, fill="x")
         upload_inner = ctk.CTkFrame(self.upload_card, fg_color="transparent")
         upload_inner.pack(fill="x", padx=20, pady=10)
-        ctk.CTkLabel(upload_inner, text="📤 Upload Progress:", font=ctk.CTkFont(weight="bold", size=13)).pack(side="left", padx=(0, 10))
+        self.task_progress_label = ctk.CTkLabel(upload_inner, text="⚡ Task Progress:", font=ctk.CTkFont(weight="bold", size=13))
+        self.task_progress_label.pack(side="left", padx=(0, 10))
         self.upload_progress_bar = ctk.CTkProgressBar(upload_inner, width=480, height=18, corner_radius=9, progress_color="#00D2FF", fg_color="#2B2B2B")
         self.upload_progress_bar.set(0)
         self.upload_progress_bar.pack(side="left", padx=(0, 12))
-        self.upload_pct_label = ctk.CTkLabel(upload_inner, text="Idle", font=ctk.CTkFont(size=13, weight="bold"), text_color="#A29BFE", width=90)
+        self.upload_pct_label = ctk.CTkLabel(upload_inner, text="Idle", font=ctk.CTkFont(size=13, weight="bold"), text_color="#A29BFE", width=110)
         self.upload_pct_label.pack(side="left")
 
         # Manual Script Browse Row (enabled/disabled by lf_manual_script_enabled setting)
@@ -301,24 +302,32 @@ class IslamicReelsStudio(ctk.CTk):
         # Set initial state of the Manual Script browse button
         self.after(200, self.refresh_manual_script_ui)
 
-    def update_upload_progress(self, pct):
-        """Thread-safe progress bar updater — called from the background upload thread."""
+    def update_task_progress(self, pct, stage_text="Processing..."):
+        """Thread-safe multi-stage progress bar updater for TTS, Subtitles, Rendering, and Uploading."""
         def _do_update():
             try:
-                self.upload_progress_bar.set(pct / 100)
+                frac = max(0.0, min(1.0, pct / 100.0))
+                self.upload_progress_bar.set(frac)
+                if stage_text:
+                    self.task_progress_label.configure(text=f"⚡ {stage_text}:")
                 if pct >= 100:
-                    self.upload_pct_label.configure(text="✅ Done!", text_color="#2ECC71")
-                    # Auto-reset to Idle after 4 seconds
-                    self.after(4000, self._reset_upload_bar)
+                    self.upload_pct_label.configure(text="✅ 100%", text_color="#2ECC71")
                 else:
-                    self.upload_pct_label.configure(text=f"{pct}%", text_color="#00D2FF")
+                    self.upload_pct_label.configure(text=f"{int(pct)}%", text_color="#00D2FF")
             except Exception:
                 pass
         self.after(0, _do_update)
 
+    def update_upload_progress(self, pct):
+        """Thread-safe progress bar updater — called from the background upload thread."""
+        self.update_task_progress(pct, "Upload Progress")
+        if pct >= 100:
+            self.after(4000, self._reset_upload_bar)
+
     def _reset_upload_bar(self):
         try:
             self.upload_progress_bar.set(0)
+            self.task_progress_label.configure(text="⚡ Task Progress:")
             self.upload_pct_label.configure(text="Idle", text_color="#A29BFE")
         except Exception:
             pass
@@ -927,7 +936,7 @@ class IslamicReelsStudio(ctk.CTk):
                     from audio_generator import VOICE_ACTORS, sync_generate_kokoro
                     voice_code = VOICE_ACTORS.get(voice_actor, "af_bella")
                     
-                    test_text = "Hello! This is a live voice test of the premium voice actor selected in the long-form engine."
+                    test_text = "I am speaking on the behalf of AMB ENTERPRISE."
                     test_path = os.path.join(LF_TEMP, "voice_test.wav")
                     
                     sync_generate_kokoro(test_text, voice_code, test_path)
@@ -1315,7 +1324,8 @@ class IslamicReelsStudio(ctk.CTk):
                     script_file, 
                     settings.get("lf_main_language", "English"), 
                     audio_out,
-                    voice_actor=voice_actor
+                    voice_actor=voice_actor,
+                    progress_callback=self.update_task_progress
                 ))
                 if os.path.exists(audio_out):
                     print("[+] Chunked Audio Generation Complete")
@@ -1329,13 +1339,16 @@ class IslamicReelsStudio(ctk.CTk):
                 if os.path.exists(srt_out):
                     print(f"   > 📂 Smart Resume: Found existing subtitle file: {srt_out}. Bypassing generation.")
                 else:
+                    self.update_task_progress(50, "Transcribing Subtitles (Groq)")
                     long_form_composer.generate_srt(
                         audio_out, 
                         srt_out, 
                         hardware_mode=hw_mode,
                         device=hw_profile,
-                        language=settings.get("lf_main_language", "English")
+                        language=settings.get("lf_main_language", "English"),
+                        groq_api_keys=settings.get("groq_api_keys", [])
                     )
+                    self.update_task_progress(100, "Subtitles Ready")
             else:
                 print("   > 🚫 Subtitles are disabled. Skipping subtitle generation.")
                 srt_out = None
@@ -1364,7 +1377,8 @@ class IslamicReelsStudio(ctk.CTk):
                 sub_position=sub_position,
                 hardware_mode=hw_mode,
                 device=hw_profile,
-                bg_music_enabled=bg_music_enabled
+                bg_music_enabled=bg_music_enabled,
+                progress_callback=self.update_task_progress
             )
             
             if success:
@@ -1516,17 +1530,15 @@ class IslamicReelsStudio(ctk.CTk):
         print(f"   > 🧹 Asset Cleanup complete.")
 
     def run_pipeline(self):
-        print("[SYSTEM] Long-Form Automation Engine started...")
+        print("[SYSTEM] Long-Form Automation Engine started. Scanning profile queues...")
         while self.is_running:
             try:
                 for prof_name, settings in self.master_settings.items():
                     if not self.is_running: break
-                    if not settings.get("lf_auto_enabled", False): continue
-                    
                     self.process_long_form_queue(prof_name, settings)
                     
-                # Poll every 60 seconds with 1-second ticks
-                for _ in range(60):
+                # Poll every 30 seconds with 1-second ticks
+                for _ in range(30):
                     if not self.is_running: break
                     time.sleep(1)
                     

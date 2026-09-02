@@ -23,7 +23,7 @@ class LongFormScripter:
             self.api_keys = []
             
         self.current_key_index = 0
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "qwen/qwen3.6-27b"
         
         if self.api_keys:
             self.client = Groq(api_key=self.api_keys[self.current_key_index])
@@ -60,7 +60,9 @@ class LongFormScripter:
                     temperature=0.7,
                     max_tokens=2500,
                 )
-                return completion.choices[0].message.content.strip()
+                raw_content = completion.choices[0].message.content.strip()
+                clean_content = re.sub(r"<think>[\s\S]*?</think>", "", raw_content).strip()
+                return clean_content
             except Exception as e:
                 error_str = str(e)
                 if "429" in error_str or "Rate limit" in error_str:
