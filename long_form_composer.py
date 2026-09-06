@@ -311,13 +311,13 @@ def is_nvenc_functional():
 
 def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, final_output_path, sub_size="24", sub_color="Yellow", sub_position="Bottom", hardware_mode="Standard", device="cpu", bg_music_enabled=True, progress_callback=None):
     # Enforce strict local directory routing to purge any legacy AppData path inputs
-    if srt_path:
+    if srt_path and not os.path.exists(srt_path):
         srt_path = os.path.join(os.getcwd(), "lf_temp", os.path.basename(srt_path))
-    if audio_path:
+    if audio_path and not os.path.exists(audio_path):
         audio_path = os.path.join(os.getcwd(), "lf_temp", os.path.basename(audio_path))
-    if image_path:
+    if image_path and not os.path.exists(image_path):
         image_path = os.path.join(os.getcwd(), "lf_assets", os.path.basename(image_path))
-    if final_output_path:
+    if final_output_path and not os.path.isabs(final_output_path):
         final_output_path = os.path.join(os.getcwd(), "lf_output", os.path.basename(final_output_path))
 
     total_gb, allocated_gb, _ = _get_ram_allocation()
@@ -359,15 +359,15 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
             print(f"   > 🎵 Injecting & Looping Background Music: {os.path.basename(bg_music_path)}")
         cmd.extend(['-stream_loop', '-1', '-i', bg_music_path])
         filter_complex = (
-            f"[1:a]volume=1.0[a1];[2:a]volume=0.08[a2];"
+            f"[1:a]aresample=48000,volume=1.0[a1];[2:a]aresample=48000,volume=0.08[a2];"
             f"[a1][a2]amix=inputs=2:duration=first[aout];"
             f"{video_filter}"
         )
         audio_map = '[aout]'
     else:
         print("   > 🎵 Background music disabled or missing. Rendering voiceover audio stream only.")
-        filter_complex = f"{video_filter}"
-        audio_map = '1:a'
+        filter_complex = f"[1:a]aresample=48000[aout];{video_filter}"
+        audio_map = '[aout]'
  
     # Dynamic FFmpeg thread count: scale with CPU cores
     logical_cores = psutil.cpu_count(logical=True) or 4
@@ -402,11 +402,11 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
             '-g', '300',
             '-fps_mode', 'vfr',
             '-threads', threads,
-            '-c:a', 'aac', '-b:a', '128k',
+            '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
             '-shortest', '-progress', 'pipe:1', '-y', final_output_path
         ])
         
-        process = subprocess.Popen(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = subprocess.Popen(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         last_pct = -1
         while True:
             line = process.stdout.readline()
@@ -416,22 +416,24 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
                 line = line.strip()
                 if line.startswith("out_time_us="):
                     try:
-                        us = int(line.split("=")[1])
-                        cur_sec = us / 1_000_000.0
-                        if audio_dur > 0:
-                            pct = min(99, int((cur_sec / audio_dur) * 100))
-                            if pct != last_pct:
-                                last_pct = pct
-                                if pct % 10 == 0 or pct in [25, 50, 75]:
-                                    filled = int(15 * pct / 100)
-                                    empty = 15 - filled
-                                    print(f"[+] 🎬 Video Render Progress: [{'█' * filled}{'░' * empty}] {pct}%")
-                                if progress_callback:
-                                    progress_callback(pct, "Rendering Video")
+                        val = line.split("=")[1].strip()
+                        if val.isdigit():
+                            us = int(val)
+                            cur_sec = us / 1_000_000.0
+                            if audio_dur > 0:
+                                pct = min(99, int((cur_sec / audio_dur) * 100))
+                                if pct != last_pct:
+                                    last_pct = pct
+                                    if pct % 10 == 0 or pct in [25, 50, 75]:
+                                        filled = int(15 * pct / 100)
+                                        empty = 15 - filled
+                                        print(f"[+] 🎬 Video Render Progress: [{'█' * filled}{'░' * empty}] {pct}%")
+                                    if progress_callback:
+                                        progress_callback(pct, "Rendering Video")
                     except Exception:
                         pass
                         
-        _, stderr = process.communicate()
+        process.communicate()
         if process.returncode == 0:
             print(f"[+] 🎬 Video Render Progress: [{'█' * 15}] 100% (Render Complete)")
             if progress_callback:
@@ -439,8 +441,7 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
             print(f"   > ✅ Final Video successfully rendered: {final_output_path}")
             return True
         else:
-            err_snip = stderr[-300:].strip() if stderr else "Unknown error"
-            print(f"   > ℹ️ Encoder {enc_name} was unable to run ({err_snip.splitlines()[-1] if err_snip else 'error'}). Trying fallback...")
+            print(f"   > ℹ️ Encoder {enc_name} failed (exit code {process.returncode}). Trying fallback...")
 
     print("   > ❌ FFmpeg Render Failed across all encoders.")
     return False

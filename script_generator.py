@@ -23,19 +23,22 @@ class LongFormScripter:
             self.api_keys = []
             
         self.current_key_index = 0
-        self.model = "qwen/qwen3.6-27b"
+        self.model = "openai/gpt-oss-120b"
         
         if self.api_keys:
             self.client = Groq(api_key=self.api_keys[self.current_key_index])
         else:
             self.client = None
 
-        if custom_length_enabled:
-            target_words = target_minutes * 150  # Average TTS reading speed is 150 WPM
-            # An average single AI generation part yields ~1500 words
-            self.total_parts = math.ceil(target_words / 1500)
+        self.target_minutes = max(1, int(target_minutes))
+        self.total_target_words = self.target_minutes * 140  # 140 words per minute average speaking rate
+        
+        if self.target_minutes <= 3:
+            self.total_parts = 1 # 1 concise part (~140-420 words -> 2 to 4 chunks)
+        elif self.target_minutes <= 10:
+            self.total_parts = max(1, math.ceil(self.total_target_words / 600))
         else:
-            self.total_parts = 6 # Default 1-hour generation fallback (6 parts * ~1500 words = ~9000 words)
+            self.total_parts = max(3, math.ceil(self.total_target_words / 1400))
 
     def switch_key(self):
         from groq import Groq
@@ -61,8 +64,35 @@ class LongFormScripter:
                     max_tokens=2500,
                 )
                 raw_content = completion.choices[0].message.content.strip()
-                clean_content = re.sub(r"<think>[\s\S]*?</think>", "", raw_content).strip()
-                return clean_content
+                
+                # Strip <think>...</think> blocks (closed)
+                clean_content = re.sub(r'<think>[\s\S]*?</think>', '', raw_content, flags=re.IGNORECASE).strip()
+                
+                # Strip unclosed <think> blocks — everything from <think> to end of string
+                clean_content = re.sub(r'<think>[\s\S]*', '', clean_content, flags=re.IGNORECASE).strip()
+                
+                # Strip any other XML/HTML-style tags leaked from model reasoning
+                clean_content = re.sub(r'<[^>]+>', '', clean_content).strip()
+                
+                # Strip lines that look like AI meta-commentary or prompt leakage
+                bad_patterns = [
+                    r'(?i)^(here\'?s?|note:|output only|language:|style and|written in|spoken script|script:|voiceover:|---+|\*\*\*+|#+ ).*$',
+                    r'(?i)^(i (will|am|have|need|should)|let me|okay,|alright,|sure[,.]|of course).*$',
+                    r'(?i)^(target duration|word count|approximately|maximum \d+|output only).*$',
+                ]
+                lines = clean_content.split('\n')
+                filtered_lines = []
+                for line in lines:
+                    stripped = line.strip()
+                    if not stripped:
+                        filtered_lines.append(line)
+                        continue
+                    is_bad = any(re.match(pat, stripped) for pat in bad_patterns)
+                    if not is_bad:
+                        filtered_lines.append(line)
+                clean_content = '\n'.join(filtered_lines).strip()
+                
+                return clean_content if clean_content else None
             except Exception as e:
                 error_str = str(e)
                 if "429" in error_str or "Rate limit" in error_str:
@@ -218,14 +248,23 @@ class LongFormScripter:
             # -----------------------------------------------------------
             # BUILD USER PROMPT
             # -----------------------------------------------------------
-            if IS_RUSSIAN_STORY:
+            if total_parts == 1:
+                # Single-part concise video (e.g. 1 to 3 minutes)
+                user_prompt = (
+                    f"Write a complete, gripping, high-retention video script titled '{title}'.\n"
+                    f"CRITICAL CONSTRAINT: Target duration is {self.target_minutes} minute(s). "
+                    f"Write approximately {self.total_target_words} words (maximum {self.total_target_words + 40} words).\n"
+                    f"Start with a powerful 1-sentence hook, deliver the core dramatic story concisely, and conclude with a 1-sentence call to subscribe.\n"
+                    f"Output ONLY the spoken script in {language}."
+                )
+            elif IS_RUSSIAN_STORY:
                 if part == 1:
                     user_prompt = (
                         f"Write the cold open for a true-crime/drama video titled '{title}'.\n"
                         f"Hook: First 2 sentences must describe a shocking real-world incident involving a named person.\n"
                         f"Twist: Sentences 3–5 must deliver an immediate plot reversal that changes everything.\n"
                         f"Continue the scene with fast, factual dialogue and actions. No filler. No scene-setting monologues.\n"
-                        f"Minimum 500 words. Output only the spoken script in {language}."
+                        f"Target around {self.total_target_words // total_parts} words. Output only the spoken script in {language}."
                     )
                 elif part == total_parts:
                     user_prompt = (
@@ -233,7 +272,7 @@ class LongFormScripter:
                         f"\"{last_paragraph}\"\n\n"
                         f"Write the FINAL chapter. Resolve the story. Deliver the verdict, sentence, or outcome.\n"
                         f"End with exactly one sentence asking viewers to like and subscribe.\n"
-                        f"Minimum 500 words. Output only the spoken script in {language}."
+                        f"Target around {self.total_target_words // total_parts} words. Output only the spoken script in {language}."
                     )
                 else:
                     user_prompt = (
@@ -241,7 +280,7 @@ class LongFormScripter:
                         f"\"{last_paragraph}\"\n\n"
                         f"Continue IMMEDIATELY from this point. No recap. No re-introduction of characters.\n"
                         f"Write Chapter {part}: actions, raw dialogue, new conflict or revelation.\n"
-                        f"Minimum 500 words. Output only the spoken script in {language}."
+                        f"Target around {self.total_target_words // total_parts} words. Output only the spoken script in {language}."
                     )
             elif IS_FAMILY_DRAMA:
                 if part == 1:
@@ -249,8 +288,8 @@ class LongFormScripter:
                         f"Write the emotional opening scene of a family drama story titled '{title}'.\n"
                         f"Hook: First 1-2 sentences must be a shocking, relatable revelation about a family relationship.\n"
                         f"Immediately launch into a tense family conversation using realistic dialogue.\n"
-                        f"Introduce the key family members naturally through their words and actions — not through descriptions.\n"
-                        f"Minimum 500 words. Output only the spoken script in {language}."
+                        f"Introduce the key family members naturally through their words and actions.\n"
+                        f"Target around {self.total_target_words // total_parts} words. Output only the spoken script in {language}."
                     )
                 elif part == total_parts:
                     user_prompt = (
@@ -259,7 +298,7 @@ class LongFormScripter:
                         f"Write the FINAL chapter of this family drama. Resolve the central conflict.\n"
                         f"Show the emotional resolution through dialogue and character reactions.\n"
                         f"End with one natural sentence inviting viewers to like and subscribe.\n"
-                        f"Minimum 500 words. Output only the spoken script in {language}."
+                        f"Target around {self.total_target_words // total_parts} words. Output only the spoken script in {language}."
                     )
                 else:
                     user_prompt = (
@@ -267,32 +306,29 @@ class LongFormScripter:
                         f"\"{last_paragraph}\"\n\n"
                         f"Continue IMMEDIATELY from this point. Do not recap or re-introduce family members.\n"
                         f"Write Chapter {part}: a new confrontation, secret revealed, or emotional turning point — through dialogue.\n"
-                        f"Minimum 500 words. Output only the spoken script in {language}."
+                        f"Target around {self.total_target_words // total_parts} words. Output only the spoken script in {language}."
                     )
             else:
-                # Original user prompts — unchanged for all other styles
+                # Default style prompt tailored to total_parts
                 if part == 1:
                     user_prompt = (
-                        f"Write the powerful, slow-building introduction and Part 1 of a 1-hour deep-dive video titled '{title}'. "
-                        f"Hook the viewer immediately, but do not rush the story. Paint a vivid picture of the world and the stakes. "
-                        f"Write a minimum of 600 words. Output only the spoken script in {language}."
+                        f"Write Part 1 of a video titled '{title}'. "
+                        f"Hook the viewer immediately, paint a vivid picture of the stakes. "
+                        f"Target around {self.total_target_words // total_parts} words. Output only the spoken script in {language}."
                     )
                 elif part == total_parts:
                     user_prompt = (
                         f"We are writing a video titled '{title}'. "
                         f"Here is the end of the previous section to maintain flow:\n\"{last_paragraph}\"\n\n"
-                        f"Now, write the final Part {total_parts}. This is the grand conclusion. "
-                        f"Summarize the overarching lessons and wrap up the narrative powerfully. Include a subtle call to action to subscribe. "
-                        f"Write a minimum of 500 words. Output only the spoken script in {language}."
+                        f"Now, write the final Part {total_parts}. Summarize the overarching lessons and conclude with a call to subscribe. "
+                        f"Target around {self.total_target_words // total_parts} words. Output only the spoken script in {language}."
                     )
                 else:
                     user_prompt = (
-                        f"We are writing a 1-hour video titled '{title}'. "
+                        f"We are writing a video titled '{title}'. "
                         f"Here is the end of the previous section to maintain flow:\n\"{last_paragraph}\"\n\n"
                         f"Continue the narrative seamlessly from exactly where that left off. Write Part {part}. "
-                        f"CRITICAL: Do NOT skip ahead. Expand heavily on the current scene or topic. "
-                        f"Dive deep into the philosophy, mechanics, or history of this specific moment. "
-                        f"Write a minimum of 600 words. Output only the spoken script in {language}."
+                        f"Target around {self.total_target_words // total_parts} words. Output only the spoken script in {language}."
                     )
 
             chunk_text = self._call_groq(active_system, user_prompt)
@@ -312,6 +348,28 @@ class LongFormScripter:
 
         print("   > ✅ All parts generated successfully. Assembling master script...")
         master_script_text = "\n\n".join(full_script)
+
+        # ---------------------------------------------------------------
+        # HARD WORD COUNT ENFORCEMENT
+        # Groq often ignores word limits. We enforce the exact target here.
+        # ---------------------------------------------------------------
+        all_words = master_script_text.split()
+        actual_words = len(all_words)
+        print(f"   > 📊 Raw Groq output: {actual_words} words | Target: {self.total_target_words} words")
+        if actual_words > self.total_target_words:
+            # Truncate at the nearest sentence end at or before target word count
+            truncated_words = all_words[:self.total_target_words]
+            truncated_text = " ".join(truncated_words)
+            # Try to find the last sentence boundary (. ! ?) so we don't cut mid-sentence
+            for end_char in ['. ', '! ', '? ', '.\n', '!\n', '?\n']:
+                last_period = truncated_text.rfind(end_char)
+                if last_period > len(truncated_text) * 0.7:
+                    truncated_text = truncated_text[:last_period + 1].strip()
+                    break
+            master_script_text = truncated_text
+            print(f"   > ✂️ Script truncated to {len(master_script_text.split())} words for {self.target_minutes}-minute video.")
+        else:
+            print(f"   > ✅ Script word count OK: {actual_words} words.")
 
         safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '_')).rstrip()
         output_file = os.path.join(SCRIPT_DIR, f"{safe_title.replace(' ', '_')}.txt")

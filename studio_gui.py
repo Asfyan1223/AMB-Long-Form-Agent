@@ -114,7 +114,7 @@ class RedirectText:
             
             if any(prefix in line for prefix in ["[+]", "[x]", "[SYSTEM]", "✅", "🎬", "🚀", "[!]", "🎙️", "⏳", "⚡", "🧠", "🔗", "⚙️", "🎵", "📄", "💾", "⚠️", "❌", ">"]):
                 show_in_gui = True
-            elif any(keyword in lower_line for keyword in ["error", "halted", "pipeline", "initiating", "cooldown", "retrying", "progress", "chunk", "tts", "kokoro", "whisper", "transcrib", "render", "ffmpeg"]):
+            elif any(keyword in lower_line for keyword in ["error", "halted", "pipeline", "initiating", "cooldown", "retrying", "progress", "chunk", "tts", "silero", "whisper", "transcrib", "render", "ffmpeg"]):
                 show_in_gui = True
             elif "cycle complete" in lower_line or "logged successful" in lower_line:
                 show_in_gui = True
@@ -554,30 +554,16 @@ class IslamicReelsStudio(ctk.CTk):
             print(f"   > ❌ SQLite Backup Error: {e}")
 
     def update_lf_countdown(self):
-        import time
         try:
-            settings = self.master_settings.get(self.active_profile, {})
-            lf_last_upload_time = settings.get("lf_last_upload_time", 0)
-            lf_interval_hours = settings.get("lf_upload_interval", 24)
-            
-            current_time = time.time()
-            next_post = lf_last_upload_time + (lf_interval_hours * 3600)
-            time_left = next_post - current_time
-            
-            if time_left <= 0:
-                status_text = "Status: Engine Busy..." if self.engine_is_busy else "Status: Ready to Render"
-                color = "#2ECC71"
-            else:
-                hrs = int(time_left // 3600)
-                mins = int((time_left % 3600) // 60)
-                secs = int(time_left % 60)
-                status_text = f"Next LF Post: {hrs:02d}:{mins:02d}:{secs:02d}"
+            if self.engine_is_busy:
+                status_text = "Status: Engine Busy..."
                 color = "#F39C12"
-                
+            else:
+                status_text = "Status: Ready to Render"
+                color = "#2ECC71"
             self.lbl_countdown.configure(text=status_text, text_color=color)
-        except Exception as e:
+        except Exception:
             pass
-            
         self.after(1000, self.update_lf_countdown)
 
     def auto_start_check(self):
@@ -873,15 +859,13 @@ class IslamicReelsStudio(ctk.CTk):
         lf_frame = ctk.CTkScrollableFrame(tabview.tab("Long-Form Engine"), fg_color="transparent")
         lf_frame.pack(fill="both", expand=True, pady=10)
 
-        ctk.CTkLabel(lf_frame, text="Long-Form Automation Controls", font=ctk.CTkFont(weight="bold"), text_color="#F39C12").pack(anchor="w", pady=(5, 5))
+        ctk.CTkLabel(lf_frame, text="Video Generation & Automation Controls", font=ctk.CTkFont(weight="bold"), text_color="#F39C12").pack(anchor="w", pady=(5, 5))
         
         lf_toggle_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         lf_toggle_row.pack(fill="x", pady=5)
-        lf_enabled_var = ctk.BooleanVar(value=self.get_active_setting("lf_enabled", False))
-        ctk.CTkSwitch(lf_toggle_row, text="Enable 1-Hour+ Video Gen", variable=lf_enabled_var).pack(side="left", padx=10)
         
-        lf_auto_var = ctk.BooleanVar(value=self.get_active_setting("lf_auto_enabled", False))
-        ctk.CTkSwitch(lf_toggle_row, text="Enable Long-Form Automation", variable=lf_auto_var).pack(side="left", padx=10)
+        lf_auto_var = ctk.BooleanVar(value=self.get_active_setting("lf_auto_enabled", True))
+        ctk.CTkSwitch(lf_toggle_row, text="Enable Queue Automation Engine", variable=lf_auto_var).pack(side="left", padx=10)
 
         lf_sub_toggle_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         lf_sub_toggle_row.pack(fill="x", pady=5)
@@ -909,14 +893,14 @@ class IslamicReelsStudio(ctk.CTk):
         lf_interval_var = ctk.StringVar(value=str(self.get_active_setting("lf_upload_interval", 24)))
         ctk.CTkOptionMenu(lf_upl_row, variable=lf_interval_var, values=[str(i) for i in range(1, 73)], width=80).pack(side="left")
 
+        # Direct Target Duration Input
         lf_length_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         lf_length_row.pack(fill="x", pady=5)
-        lf_custom_length_var = ctk.BooleanVar(value=self.get_active_setting("lf_custom_length_enabled", False))
-        ctk.CTkSwitch(lf_length_row, text="Enable Custom Target Length", variable=lf_custom_length_var).pack(side="left", padx=10)
-        ctk.CTkLabel(lf_length_row, text="Target Duration (Minutes):").pack(side="left", padx=(10, 5))
-        lf_target_minutes_var = ctk.StringVar(value=str(self.get_active_setting("lf_target_minutes", 60)))
+        ctk.CTkLabel(lf_length_row, text="Target Video Duration (Minutes):", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=(10, 5))
+        lf_target_minutes_var = ctk.StringVar(value=str(self.get_active_setting("lf_target_minutes", 2)))
         lf_target_minutes_entry = ctk.CTkEntry(lf_length_row, textvariable=lf_target_minutes_var, width=80)
         lf_target_minutes_entry.pack(side="left", padx=5)
+        ctk.CTkLabel(lf_length_row, text="← Enter exact minutes (e.g. 2 for 2-min video, 60 for 1-hour video)", font=ctk.CTkFont(size=11), text_color="#888").pack(side="left", padx=(10, 0))
 
         # Voice Actor Dropdown (pre-defined for dynamic callback setup)
         voice_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
@@ -933,13 +917,14 @@ class IslamicReelsStudio(ctk.CTk):
             
             def play_thread():
                 try:
-                    from audio_generator import VOICE_ACTORS, sync_generate_kokoro
-                    voice_code = VOICE_ACTORS.get(voice_actor, "af_bella")
+                    from silero_manager import sync_generate_silero
+                    from audio_generator import VOICE_ACTORS
+                    speaker = VOICE_ACTORS.get(voice_actor, "xenia")
                     
-                    test_text = "I am speaking on the behalf of AMB ENTERPRISE."
+                    test_text = "Здравствуйте! Это проверка голоса студии АМБ."
                     test_path = os.path.join(LF_TEMP, "voice_test.wav")
                     
-                    sync_generate_kokoro(test_text, voice_code, test_path)
+                    sync_generate_silero(test_text, speaker=speaker, output_path=test_path, sample_rate=48000)
                     
                     import winsound
                     winsound.PlaySound(test_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
@@ -954,43 +939,21 @@ class IslamicReelsStudio(ctk.CTk):
             command=play_test_voice
         ).pack(side="left", padx=5)
 
-        # 13 premium voices for all languages
+        # Silero Neural Voices
         PREMIUM_VOICES_POOL = [
-            "Bella (Premium Female)",
-            "Sarah (Premium Female)",
-            "Nicole (Premium Female)",
-            "Sky (Premium Female)",
-            "Heart (Premium Female)",
-            "Adam (Premium Male)",
-            "Michael (Premium Male)",
-            "Fenrir (Premium Male)",
-            "Puck (Premium Male)",
-            "Emma (Premium Female)",
-            "Isabella (Premium Female)",
-            "George (Premium Male)",
-            "Lewis (Premium Male)"
+            "Xenia (Default Female)",
+            "Baya (Warm Female)",
+            "Kseniya (Clear Female)",
+            "Aidar (Deep Male)",
+            "Eugene (Calm Male)"
         ]
 
         VOICE_ACTORS_BY_LANG = {
-            "English": [
-                "English (US) Bella (Premium Female)",
-                "English (US) Sarah (Premium Female)",
-                "English (US) Nicole (Premium Female)",
-                "English (US) Sky (Premium Female)",
-                "English (US) Heart (Premium Female)",
-                "English (US) Adam (Premium Male)",
-                "English (US) Michael (Premium Male)",
-                "English (US) Fenrir (Premium Male)",
-                "English (US) Puck (Premium Male)",
-                "English (UK) Emma (Premium Female)",
-                "English (UK) Isabella (Premium Female)",
-                "English (UK) George (Premium Male)",
-                "English (UK) Lewis (Premium Male)"
-            ],
-            "German": [f"German {v}" for v in PREMIUM_VOICES_POOL],
-            "Russian": [f"Russian {v}" for v in PREMIUM_VOICES_POOL],
-            "Arabic": [f"Arabic {v}" for v in PREMIUM_VOICES_POOL],
-            "Urdu": [f"Urdu {v}" for v in PREMIUM_VOICES_POOL]
+            "English": PREMIUM_VOICES_POOL,
+            "German": PREMIUM_VOICES_POOL,
+            "Russian": PREMIUM_VOICES_POOL,
+            "Arabic": PREMIUM_VOICES_POOL,
+            "Urdu": PREMIUM_VOICES_POOL
         }
 
         def update_voice_menu(selected_lang):
@@ -1103,15 +1066,14 @@ class IslamicReelsStudio(ctk.CTk):
             self.backup_keys_to_db(self.active_profile, groq_keys_list)
             
             # --- LONG FORM SAVES ---
-            self.set_active_setting("lf_enabled", lf_enabled_var.get())
+            self.set_active_setting("lf_enabled", True)
             self.set_active_setting("lf_auto_enabled", lf_auto_var.get())
             self.set_active_setting("lf_subtitles_enabled", lf_subtitles_var.get())
             self.set_active_setting("lf_bg_music_enabled", lf_bg_music_enabled_var.get())
-            self.set_active_setting("lf_custom_length_enabled", lf_custom_length_var.get())
             try:
                 minutes_val = int(lf_target_minutes_entry.get().strip())
             except ValueError:
-                minutes_val = 60
+                minutes_val = 2
             self.set_active_setting("lf_target_minutes", minutes_val)
             self.set_active_setting("lf_upload_interval", int(lf_interval_var.get()))
             self.set_active_setting("lf_main_language", lf_main_lang_var.get())
@@ -1167,7 +1129,7 @@ class IslamicReelsStudio(ctk.CTk):
 
     def process_long_form_queue(self, prof_name, settings, force=False):
         import os
-        if not force and not settings.get("lf_enabled", False):
+        if not force and not settings.get("lf_enabled", True):
             return
 
         queue_file = os.path.join(install_dir, "lf_queues", f"queue_{prof_name.replace(' ', '_')}.json")
@@ -1211,7 +1173,7 @@ class IslamicReelsStudio(ctk.CTk):
             except Exception as e:
                 print(f"   > ⚠️ Warning: Failed to read published history ledger: {e}")
 
-        interval_hrs = settings.get("lf_upload_interval", 24)
+        interval_hrs = settings.get("lf_upload_interval", 1)
         lf_log_file = f"lf_last_post_{prof_name}.txt"
         
         if not force and os.path.exists(lf_log_file):
@@ -1220,6 +1182,8 @@ class IslamicReelsStudio(ctk.CTk):
                     last_time = datetime.fromisoformat(f.read().strip())
                     delta_hrs = (datetime.now() - last_time).total_seconds() / 3600
                     if delta_hrs < interval_hrs:
+                        remaining_mins = int((interval_hrs - delta_hrs) * 60)
+                        print(f"   > ⏳ [{prof_name}] Interval timer active. Next run in: {remaining_mins} minute(s).")
                         return # Not enough time has passed yet
                 except: pass
 
@@ -1252,16 +1216,35 @@ class IslamicReelsStudio(ctk.CTk):
             # 1. Script Generation Checkpoint
             print("[+] Beginning Script Generation")
 
+            target_min = int(settings.get("lf_target_minutes", 2))
+
             from script_generator import LongFormScripter
             scripter = LongFormScripter(
                 settings.get("groq_api_keys", []),
-                custom_length_enabled=settings.get("lf_custom_length_enabled", False),
-                target_minutes=int(settings.get("lf_target_minutes", 60))
+                target_minutes=target_min
             )
 
             # --- MANUAL SCRIPT MODE OVERRIDE ---
             manual_mode = settings.get("lf_manual_script_enabled", False)
             manual_path = getattr(self, "manual_script_path", "").strip()
+
+            # --- DURATION-AWARE CACHE CHECK ---
+            # If the user changed target duration, purge mismatched cached scripts/audios automatically
+            if not manual_mode and os.path.exists(script_file):
+                try:
+                    with open(script_file, "r", encoding="utf-8") as sf:
+                        cached_words = len(sf.read().split())
+                    expected_words = target_min * 140
+                    # If cached script deviates significantly from target duration, invalidate cache
+                    if abs(cached_words - expected_words) > max(150, expected_words * 0.5):
+                        print(f"   > 🔄 Target Duration Mismatch: Cached script ({cached_words} words) != Target ({target_min} min / ~{expected_words} words).")
+                        print(f"   > 🧹 Auto-purging outdated cache files for fresh {target_min}-minute generation...")
+                        for cf in [script_file, audio_out, srt_out, vid_out]:
+                            if os.path.exists(cf):
+                                try: os.remove(cf)
+                                except Exception: pass
+                except Exception:
+                    pass
 
             if manual_mode:
                 if manual_path and os.path.exists(manual_path):
@@ -1535,9 +1518,15 @@ class IslamicReelsStudio(ctk.CTk):
             try:
                 for prof_name, settings in self.master_settings.items():
                     if not self.is_running: break
+                    # Only process profiles that have lf_enabled=True
+                    if not settings.get("lf_enabled", True):
+                        print(f"   > ⏭️ Skipping [{prof_name}]: lf_enabled is OFF")
+                        continue
+                    print(f"   > 🔍 Scanning queue for [{prof_name}]...")
                     self.process_long_form_queue(prof_name, settings)
                     
                 # Poll every 30 seconds with 1-second ticks
+                print("   > ⏰ Scan complete. Waiting 30 seconds before next scan...")
                 for _ in range(30):
                     if not self.is_running: break
                     time.sleep(1)
