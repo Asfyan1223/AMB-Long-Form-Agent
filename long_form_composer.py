@@ -33,6 +33,9 @@ import subprocess
 import imageio_ffmpeg
 import math
 import psutil
+import time
+import collections
+import threading
 from faster_whisper import WhisperModel
 
 # ---------------------------------------------------------------------------
@@ -333,6 +336,31 @@ def is_nvenc_functional():
         _nvenc_tested = False
     return _nvenc_tested
 
+def get_media_duration(file_path):
+    """Accurately and quickly extracts duration in seconds using ffprobe, fallback to pydub."""
+    if not file_path or not os.path.exists(file_path):
+        return 0.0
+    ffprobe_bin = FFPROBE_PATH if os.path.exists(FFPROBE_PATH) else "ffprobe"
+    try:
+        cmd = [
+            ffprobe_bin,
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            file_path
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if res.returncode == 0 and res.stdout.strip():
+            val = float(res.stdout.strip())
+            if val > 0:
+                return val
+    except Exception:
+        pass
+    try:
+        return AudioSegment.from_file(file_path).duration_seconds
+    except Exception:
+        return 120.0
+
 def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, final_output_path, sub_size="24", sub_color="Yellow", sub_position="Bottom", hardware_mode="Standard", device="cpu", bg_music_enabled=True, progress_callback=None):
     # Enforce strict local directory routing to purge any legacy AppData path inputs
     if srt_path and not os.path.exists(srt_path):
@@ -345,20 +373,26 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
         final_output_path = os.path.join(os.getcwd(), "lf_output", os.path.basename(final_output_path))
 
     total_gb, allocated_gb, _ = _get_ram_allocation()
-    print(f"   > 🎬 Booting FFmpeg Render Engine | [+] Dynamic Memory: Total {total_gb}GB | Allocating {allocated_gb}GB (75%)")
-    ffmpeg_exe = FFMPEG_PATH
-    
+    print(f"   > 🎬 Booting FFmpeg Render Engine | [+] Dynamic Memory: Total {total_gb}GB | Allocating {allocated_gb}GB (75%)", flush=True)
+    ffmpeg_exe = FFMPEG_PATH if os.path.exists(FFMPEG_PATH) else "ffmpeg"
+
+    # Calculate audio duration precisely
+    audio_dur = get_media_duration(audio_path)
+    if audio_dur <= 0:
+        audio_dur = 120.0
+    dur_str = f"{audio_dur:.2f}"
+
+    # Image input: bounded by audio duration to eliminate demuxer infinite loops
     cmd = [
         ffmpeg_exe,
-        '-loop', '1', '-framerate', '2', 
+        '-loop', '1',
+        '-t', dur_str,
+        '-framerate', '24',
         '-i', image_path,
         '-i', audio_path
     ]
-    
-    # Enforce locked alignment=2 (bottom-center) for consistent single-line positioning
-    alignment = "2"
-    
-    # SSA Primary Colors: Yellow (constqp/hex conversion), White, Green, Cyan
+
+    # SSA Primary Colors: Yellow, White, Green, Cyan
     COLOR_MAP = {
         "Yellow": "&H0000FFFF",
         "White": "&H00FFFFFF",
@@ -369,31 +403,33 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
 
     # Build video filter with or without subtitles
     video_filter = "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
-    if srt_path:
-        clean_srt = os.path.relpath(srt_path, os.getcwd()).replace("\\", "/") if os.path.exists(srt_path) else srt_path.replace("\\", "/")
+    if srt_path and os.path.exists(srt_path):
+        # Format and escape SRT path for FFmpeg filter on Windows
+        clean_srt = os.path.abspath(srt_path).replace("\\", "/")
+        clean_srt = clean_srt.replace(":", "\\:")
+        clean_srt = clean_srt.replace("'", "'\\''")
         video_filter += f",subtitles=filename='{clean_srt}':force_style='Alignment=2,FontSize={sub_size},PrimaryColour={ssa_color},Outline=2,Shadow=1,MarginV=20,WrapStyle=2'"
     video_filter += "[vout]"
-    
+
     # Conditionally mix background music if enabled
     if bg_music_enabled and bg_music_path and os.path.exists(bg_music_path):
         is_video = bg_music_path.lower().endswith(('.mp4', '.mov'))
         if is_video:
-            print(f"   > 🎵 Extracting & Looping audio stream from background video: {os.path.basename(bg_music_path)}")
+            print(f"   > 🎵 Extracting & Looping audio stream from background video: {os.path.basename(bg_music_path)}", flush=True)
         else:
-            print(f"   > 🎵 Injecting & Looping Background Music: {os.path.basename(bg_music_path)}")
-        # Use -vn to completely bypass video decoding from the music file, saving 40% CPU
-        cmd.extend(['-stream_loop', '-1', '-vn', '-i', bg_music_path])
+            print(f"   > 🎵 Injecting & Looping Background Music: {os.path.basename(bg_music_path)}", flush=True)
+        cmd.extend(['-stream_loop', '-1', '-i', bg_music_path])
         filter_complex = (
             f"[1:a]aresample=48000,volume=1.0[a1];[2:a]aresample=48000,volume=0.08[a2];"
-            f"[a1][a2]amix=inputs=2:duration=first[aout];"
+            f"[a1][a2]amix=inputs=2:duration=first:dropout_transition=2[aout];"
             f"{video_filter}"
         )
         audio_map = '[aout]'
     else:
-        print("   > 🎵 Background music disabled or missing. Rendering voiceover audio stream only.")
+        print("   > 🎵 Background music disabled or missing. Rendering voiceover audio stream only.", flush=True)
         filter_complex = f"[1:a]aresample=48000[aout];{video_filter}"
         audio_map = '[aout]'
- 
+
     # Dynamic FFmpeg thread count: scale with CPU cores
     logical_cores = psutil.cpu_count(logical=True) or 4
     threads = str(logical_cores)
@@ -404,18 +440,12 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
         encoders_to_try.append(('NVIDIA NVENC (h264_nvenc)', ['-c:v', 'h264_nvenc', '-preset', 'fast', '-rc', 'constqp', '-qp', '23']))
     elif device == "amf":
         encoders_to_try.append(('AMD AMF (h264_amf)', ['-c:v', 'h264_amf']))
-    
+
     # Universal high-speed stillimage CPU encoder (renders 30min in ~20s)
     encoders_to_try.append(('High-Speed Stillimage Engine (libx264)', ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'stillimage', '-crf', '23']))
 
-    # Calculate audio duration for live progress tracking
-    try:
-        audio_dur = AudioSegment.from_file(audio_path).duration_seconds
-    except Exception:
-        audio_dur = 120.0
-
     for enc_name, enc_args in encoders_to_try:
-        print(f"   > 🎬 Starting Video Rendering via: {enc_name} (Threads: {threads})...")
+        print(f"   > 🎬 Starting Video Rendering via: {enc_name} (Threads: {threads})...", flush=True)
         full_cmd = list(cmd)
         full_cmd.extend([
             '-filter_complex', filter_complex,
@@ -424,23 +454,62 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
         ])
         full_cmd.extend(enc_args)
         full_cmd.extend([
-            '-g', '10',
-            '-fps_mode', 'vfr',
+            '-r', '24',
+            '-pix_fmt', 'yuv420p',
             '-threads', threads,
             '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
-            '-shortest', '-progress', 'pipe:1', '-y', final_output_path
+            '-t', dur_str,
+            '-progress', 'pipe:1', '-y', final_output_path
         ])
-        
-        process = subprocess.Popen(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        last_pct = -1
+
+        process = subprocess.Popen(
+            full_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            encoding='utf-8',
+            errors='replace'
+        )
+
+        stderr_lines = collections.deque(maxlen=30)
+        def _read_stderr():
+            try:
+                for eline in iter(process.stderr.readline, ''):
+                    if eline:
+                        stderr_lines.append(eline.strip())
+                process.stderr.close()
+            except Exception:
+                pass
+
+        err_thread = threading.Thread(target=_read_stderr, daemon=True)
+        err_thread.start()
+
+        last_callback_pct = -1
+        last_print_pct = -1
         last_print_time = 0.0
+        current_speed = ""
+        current_fps = ""
+
+        # Kick off progress bar in GUI at 0%
+        if progress_callback:
+            progress_callback(0, "Rendering Video (0%)")
+
         while True:
             line = process.stdout.readline()
             if not line and process.poll() is not None:
                 break
             if line:
                 line = line.strip()
-                if line.startswith("out_time_us="):
+                if line.startswith("speed="):
+                    sp_val = line.split("=")[1].strip()
+                    if sp_val and sp_val != "N/A":
+                        current_speed = sp_val
+                elif line.startswith("fps="):
+                    fps_val = line.split("=")[1].strip()
+                    if fps_val and fps_val not in ("0", "0.0"):
+                        current_fps = fps_val
+                elif line.startswith("out_time_us="):
                     try:
                         val = line.split("=")[1].strip()
                         if val.isdigit():
@@ -449,30 +518,71 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
                             if audio_dur > 0:
                                 pct = min(99, int((cur_sec / audio_dur) * 100))
                                 now = time.time()
-                                if pct != last_pct and (pct % 5 == 0 or (now - last_print_time) >= 3.0):
-                                    last_pct = pct
+                                cur_m, cur_s = int(cur_sec // 60), int(cur_sec % 60)
+                                tot_m, tot_s = int(audio_dur // 60), int(audio_dur % 60)
+
+                                # Calculate remaining ETA in seconds
+                                eta_str = ""
+                                if current_speed:
+                                    try:
+                                        spd_num = float(current_speed.replace('x', ''))
+                                        if spd_num > 0.1:
+                                            rem_sec = max(0, int((audio_dur - cur_sec) / spd_num))
+                                            rem_m, rem_s = rem_sec // 60, rem_sec % 60
+                                            eta_str = f"{rem_m:02d}:{rem_s:02d}"
+                                    except Exception:
+                                        pass
+
+                                # 1. Smooth GUI Progress Bar: Update whenever percentage changes (every 1%)
+                                if progress_callback and pct != last_callback_pct:
+                                    last_callback_pct = pct
+                                    gui_label = f"Rendering Video {pct}% ({cur_m:02d}:{cur_s:02d}/{tot_m:02d}:{tot_s:02d})"
+                                    if current_speed:
+                                        gui_label += f" [{current_speed}]"
+                                    if eta_str:
+                                        gui_label += f" [ETA {eta_str}]"
+                                    progress_callback(pct, gui_label)
+
+                                # 2. Live Console Log: Visual ASCII progress bar updated every 2-3% or 1.5s
+                                if pct != last_print_pct and ((pct - last_print_pct) >= 3 or (now - last_print_time) >= 1.5):
+                                    last_print_pct = pct
                                     last_print_time = now
-                                    filled = int(15 * pct / 100)
-                                    empty = 15 - filled
-                                    cur_m, cur_s = int(cur_sec // 60), int(cur_sec % 60)
-                                    tot_m, tot_s = int(audio_dur // 60), int(audio_dur % 60)
-                                    print(f"[+] 🎬 Video Render Progress: [{'█' * filled}{'░' * empty}] {pct}% ({cur_m:02d}:{cur_s:02d} / {tot_m:02d}:{tot_s:02d})")
-                                    if progress_callback:
-                                        progress_callback(pct, "Rendering Video")
+                                    bar_len = 25
+                                    filled = int(bar_len * pct / 100)
+                                    empty = bar_len - filled
+                                    bar_str = "█" * filled + "░" * empty
+
+                                    info_parts = [f"{cur_m:02d}:{cur_s:02d} / {tot_m:02d}:{tot_s:02d}"]
+                                    if current_speed:
+                                        info_parts.append(f"Speed: {current_speed}")
+                                    if current_fps:
+                                        info_parts.append(f"FPS: {current_fps}")
+                                    if eta_str:
+                                        info_parts.append(f"ETA: {eta_str}")
+                                    details = " | ".join(info_parts)
+
+                                    print(f"[+] 🎬 Render Progress: [{bar_str}] {pct:2d}% ({details})", flush=True)
                     except Exception:
                         pass
-                        
+
         process.communicate()
+        err_thread.join(timeout=2.0)
+
         if process.returncode == 0:
-            print(f"[+] 🎬 Video Render Progress: [{'█' * 15}] 100% (Render Complete)")
+            print(f"[+] 🎬 Video Render Progress: [{'█' * 15}] 100% (Render Complete)", flush=True)
             if progress_callback:
                 progress_callback(100, "Rendering Complete")
-            print(f"   > ✅ Final Video successfully rendered: {final_output_path}")
+            print(f"   > ✅ Final Video successfully rendered: {final_output_path}", flush=True)
             return True
         else:
-            print(f"   > ℹ️ Encoder {enc_name} failed (exit code {process.returncode}). Trying fallback...")
+            print(f"   > ⚠️ Encoder {enc_name} failed (exit code {process.returncode}).", flush=True)
+            if stderr_lines:
+                print("   > 📋 Diagnostics (last FFmpeg output):", flush=True)
+                for el in list(stderr_lines)[-10:]:
+                    print(f"     | {el}", flush=True)
+            print("   > 🔄 Attempting fallback encoder...", flush=True)
 
-    print("   > ❌ FFmpeg Render Failed across all encoders.")
+    print("   > ❌ FFmpeg Render Failed across all encoders.", flush=True)
     return False
 
 def get_next_background_music():

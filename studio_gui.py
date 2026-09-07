@@ -309,7 +309,8 @@ class IslamicReelsStudio(ctk.CTk):
                 frac = max(0.0, min(1.0, pct / 100.0))
                 self.upload_progress_bar.set(frac)
                 if stage_text:
-                    self.task_progress_label.configure(text=f"⚡ {stage_text}:")
+                    clean_stage = stage_text.lstrip("⚡ ").rstrip(":")
+                    self.task_progress_label.configure(text=f"⚡ {clean_stage}:")
                 if pct >= 100:
                     self.upload_pct_label.configure(text="✅ 100%", text_color="#2ECC71")
                 else:
@@ -1349,6 +1350,7 @@ class IslamicReelsStudio(ctk.CTk):
 
             # 4. Video Rendering
             print("[+] Beginning Video Composition")
+            self.update_task_progress(0, "Rendering Video (0%)")
             success = long_form_composer.render_long_form_video(
                 image_path=image_path, 
                 audio_path=audio_out, 
