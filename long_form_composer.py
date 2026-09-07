@@ -433,6 +433,7 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
         
         process = subprocess.Popen(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         last_pct = -1
+        last_print_time = 0.0
         while True:
             line = process.stdout.readline()
             if not line and process.poll() is not None:
@@ -447,12 +448,15 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
                             cur_sec = us / 1_000_000.0
                             if audio_dur > 0:
                                 pct = min(99, int((cur_sec / audio_dur) * 100))
-                                if pct != last_pct:
+                                now = time.time()
+                                if pct != last_pct and (pct % 5 == 0 or (now - last_print_time) >= 3.0):
                                     last_pct = pct
-                                    if pct % 10 == 0 or pct in [25, 50, 75]:
-                                        filled = int(15 * pct / 100)
-                                        empty = 15 - filled
-                                        print(f"[+] 🎬 Video Render Progress: [{'█' * filled}{'░' * empty}] {pct}%")
+                                    last_print_time = now
+                                    filled = int(15 * pct / 100)
+                                    empty = 15 - filled
+                                    cur_m, cur_s = int(cur_sec // 60), int(cur_sec % 60)
+                                    tot_m, tot_s = int(audio_dur // 60), int(audio_dur % 60)
+                                    print(f"[+] 🎬 Video Render Progress: [{'█' * filled}{'░' * empty}] {pct}% ({cur_m:02d}:{cur_s:02d} / {tot_m:02d}:{tot_s:02d})")
                                     if progress_callback:
                                         progress_callback(pct, "Rendering Video")
                     except Exception:
