@@ -407,22 +407,20 @@ class LongFormScripter:
             f"CRITICAL: Output ONLY valid JSON. No markdown, no code fences, no extra text."
         )
 
-        # Trim script to fit token limits (first 3000 words + last 1000 words)
+        # Send only the first 250 words (hook and context) to guarantee ultra-fast (<1s)
+        # response without exhausting Groq tokens-per-minute (TPM) quota
         words = script_text.split()
-        if len(words) > 4000:
-            prompt_text = " ".join(words[:3000]) + "\n... [Script truncated] ...\n" + " ".join(words[-1000:])
-        else:
-            prompt_text = script_text
+        prompt_text = " ".join(words[:250])
 
         user_prompt = (
-            f"Video Script:\n{prompt_text}\n\n"
+            f"Video Hook & Theme:\n{prompt_text}\n\n"
             f"Output ONLY the raw JSON object with title, description (3 paragraphs), "
             f"and 7 dynamic hashtags — all written in {language}."
         )
 
-        response = self._call_groq(system_prompt, user_prompt)
+        response = self._call_groq(system_prompt, user_prompt, retries=2)
         if not response:
-            print("   > ⚠️ Warning: Failed to generate dynamic metadata. Using fallback.")
+            print("   > ⚠️ Warning: Metadata generation skipped. Using title fallback.")
             return None
 
         try:

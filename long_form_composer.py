@@ -123,71 +123,95 @@ def generate_srt_groq(audio_path, srt_output_path, language="English", groq_api_
         file_to_send = audio_path
         
     start_time = time.time()
+    file_size_mb = os.path.getsize(file_to_send) / (1024 * 1024) if os.path.exists(file_to_send) else 0
+    
+    # If audio is larger than 22MB (e.g. multi-hour video), segment into 10-min parts for Groq 25MB limit
+    if file_size_mb > 22.0:
+        print(f"   > 📦 Audio payload ({file_size_mb:.1f}MB) exceeds 22MB. Segmenting into 10-minute parts for Groq Cloud...")
+        segment_pattern = os.path.join(TEMP_DIR, "temp_whisper_seg_%03d.mp3")
+        ffmpeg_bin = FFMPEG_PATH if os.path.exists(FFMPEG_PATH) else "ffmpeg"
+        seg_cmd = [
+            ffmpeg_bin, "-y",
+            "-i", file_to_send,
+            "-f", "segment", "-segment_time", "600",
+            "-c", "copy",
+            segment_pattern
+        ]
+        subprocess.run(seg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        import glob
+        seg_files = sorted(glob.glob(os.path.join(TEMP_DIR, "temp_whisper_seg_*.mp3")))
+    else:
+        seg_files = [file_to_send]
+
     for key_idx, key in enumerate(keys):
         try:
-            print(f"   > 🚀 Sending audio to Groq Cloud Whisper API (Key #{key_idx + 1})...")
+            print(f"   > 🚀 Transcribing via Groq Cloud Whisper API (Key #{key_idx + 1} | Parts: {len(seg_files)})...")
             client = Groq(api_key=key)
-            with open(file_to_send, "rb") as af:
-                transcription = client.audio.transcriptions.create(
-                    file=af,
-                    model="whisper-large-v3-turbo",
-                    response_format="verbose_json",
-                    language=whisper_lang,
-                    temperature=0.0
-                )
-                
-            segments = getattr(transcription, "segments", [])
-            if not segments and isinstance(transcription, dict):
-                segments = transcription.get("segments", [])
-                
+            all_segments = []
+            
+            for seg_idx, sf_path in enumerate(seg_files):
+                time_offset = seg_idx * 600.0
+                with open(sf_path, "rb") as af:
+                    transcription = client.audio.transcriptions.create(
+                        file=af,
+                        model="whisper-large-v3-turbo",
+                        response_format="verbose_json",
+                        language=whisper_lang,
+                        temperature=0.0
+                    )
+                part_segs = getattr(transcription, "segments", [])
+                if not part_segs and isinstance(transcription, dict):
+                    part_segs = transcription.get("segments", [])
+                for s in part_segs:
+                    s["time_offset"] = time_offset
+                    all_segments.append(s)
+
             if os.path.exists(srt_output_path):
                 try: os.remove(srt_output_path)
                 except Exception: pass
                 
-            if not segments:
-                raw_text = getattr(transcription, "text", "") or (transcription.get("text", "") if isinstance(transcription, dict) else "")
-                if not raw_text:
-                    raise RuntimeError("No transcription text returned from Groq.")
-                with open(srt_output_path, "w", encoding="utf-8") as f:
-                    f.write(f"1\n00:00:00,000 --> 00:00:10,000\n{raw_text}\n\n")
-            else:
-                subtitle_index = 1
-                with open(srt_output_path, "w", encoding="utf-8") as f:
-                    for segment in segments:
-                        words = segment.get("words", []) if isinstance(segment, dict) else getattr(segment, "words", [])
-                        if words:
-                            for idx in range(0, len(words), 8):
-                                w_chunk = words[idx : idx + 8]
-                                c_text = " ".join((w["word"] if isinstance(w, dict) else w.word).strip() for w in w_chunk)
-                                s_start = w_chunk[0]["start"] if isinstance(w_chunk[0], dict) else w_chunk[0].start
-                                s_end = w_chunk[-1]["end"] if isinstance(w_chunk[-1], dict) else w_chunk[-1].end
-                                f.write(f"{subtitle_index}\n{format_time(s_start)} --> {format_time(s_end)}\n{c_text}\n\n")
+            subtitle_index = 1
+            with open(srt_output_path, "w", encoding="utf-8") as f:
+                for segment in all_segments:
+                    offset = segment.get("time_offset", 0.0)
+                    words = segment.get("words", []) if isinstance(segment, dict) else getattr(segment, "words", [])
+                    if words:
+                        for idx in range(0, len(words), 8):
+                            w_chunk = words[idx : idx + 8]
+                            c_text = " ".join((w["word"] if isinstance(w, dict) else w.word).strip() for w in w_chunk)
+                            s_start = (w_chunk[0]["start"] if isinstance(w_chunk[0], dict) else w_chunk[0].start) + offset
+                            s_end = (w_chunk[-1]["end"] if isinstance(w_chunk[-1], dict) else w_chunk[-1].end) + offset
+                            f.write(f"{subtitle_index}\n{format_time(s_start)} --> {format_time(s_end)}\n{c_text}\n\n")
+                            subtitle_index += 1
+                    else:
+                        s_start = (segment["start"] if isinstance(segment, dict) else segment.start) + offset
+                        s_end = (segment["end"] if isinstance(segment, dict) else segment.end) + offset
+                        s_text = (segment["text"] if isinstance(segment, dict) else segment.text).strip()
+                        s_words = s_text.split()
+                        if len(s_words) > 8:
+                            duration = s_end - s_start
+                            num_chunks = math.ceil(len(s_words) / 8)
+                            chunk_dur = duration / num_chunks
+                            for chunk_idx in range(num_chunks):
+                                sub_w = s_words[chunk_idx * 8 : (chunk_idx + 1) * 8]
+                                chunk_text = " ".join(sub_w)
+                                c_start = s_start + (chunk_idx * chunk_dur)
+                                c_end = c_start + chunk_dur
+                                f.write(f"{subtitle_index}\n{format_time(c_start)} --> {format_time(c_end)}\n{chunk_text}\n\n")
                                 subtitle_index += 1
                         else:
-                            s_start = segment["start"] if isinstance(segment, dict) else segment.start
-                            s_end = segment["end"] if isinstance(segment, dict) else segment.end
-                            s_text = (segment["text"] if isinstance(segment, dict) else segment.text).strip()
-                            s_words = s_text.split()
-                            if len(s_words) > 8:
-                                duration = s_end - s_start
-                                num_chunks = math.ceil(len(s_words) / 8)
-                                chunk_dur = duration / num_chunks
-                                for chunk_idx in range(num_chunks):
-                                    sub_w = s_words[chunk_idx * 8 : (chunk_idx + 1) * 8]
-                                    chunk_text = " ".join(sub_w)
-                                    c_start = s_start + (chunk_idx * chunk_dur)
-                                    c_end = c_start + chunk_dur
-                                    f.write(f"{subtitle_index}\n{format_time(c_start)} --> {format_time(c_end)}\n{chunk_text}\n\n")
-                                    subtitle_index += 1
-                            else:
-                                f.write(f"{subtitle_index}\n{format_time(s_start)} --> {format_time(s_end)}\n{s_text}\n\n")
-                                subtitle_index += 1
-                                
+                            f.write(f"{subtitle_index}\n{format_time(s_start)} --> {format_time(s_end)}\n{s_text}\n\n")
+                            subtitle_index += 1
+
             elapsed = time.time() - start_time
             print(f"   > ✅ [Groq LPU Whisper] Subtitles generated successfully in {elapsed:.1f} seconds! (Saved: {srt_output_path})")
             if os.path.exists(temp_upload_audio):
                 try: os.remove(temp_upload_audio)
                 except Exception: pass
+            for sf_p in seg_files:
+                if sf_p != file_to_send and os.path.exists(sf_p):
+                    try: os.remove(sf_p)
+                    except Exception: pass
             return True
         except Exception as e:
             print(f"   > ⚠️ Groq Cloud Whisper error on Key #{key_idx + 1}: {e}")
@@ -326,7 +350,7 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
     
     cmd = [
         ffmpeg_exe,
-        '-loop', '1', '-framerate', '30', 
+        '-loop', '1', '-framerate', '2', 
         '-i', image_path,
         '-i', audio_path
     ]
@@ -357,7 +381,8 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
             print(f"   > 🎵 Extracting & Looping audio stream from background video: {os.path.basename(bg_music_path)}")
         else:
             print(f"   > 🎵 Injecting & Looping Background Music: {os.path.basename(bg_music_path)}")
-        cmd.extend(['-stream_loop', '-1', '-i', bg_music_path])
+        # Use -vn to completely bypass video decoding from the music file, saving 40% CPU
+        cmd.extend(['-stream_loop', '-1', '-vn', '-i', bg_music_path])
         filter_complex = (
             f"[1:a]aresample=48000,volume=1.0[a1];[2:a]aresample=48000,volume=0.08[a2];"
             f"[a1][a2]amix=inputs=2:duration=first[aout];"
@@ -399,7 +424,7 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
         ])
         full_cmd.extend(enc_args)
         full_cmd.extend([
-            '-g', '300',
+            '-g', '10',
             '-fps_mode', 'vfr',
             '-threads', threads,
             '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
