@@ -50,20 +50,57 @@ def _get_ram_allocation():
     allocated_bytes = int(mem.total * 0.75)
     return round(total_gb, 1), round(allocated_gb, 1), allocated_bytes
 
-def detect_nvidia_gpu():
-    """Returns True if nvidia-smi reports a GPU, False otherwise."""
+def get_nvidia_gpu_info():
+    """Returns (has_nvidia: bool, gpu_name: str, vram_gb: float) for NVIDIA GPU (e.g. GTX 1660 Super 6GB)."""
+    # 1. nvidia-smi (Fastest & direct via NVIDIA display driver)
     try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=5
+        res = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3
         )
-        if result.returncode == 0 and result.stdout.strip():
-            gpu_name = result.stdout.strip().splitlines()[0]
-            print(f"[+] Nvidia GPU Detected: Using NVENC Hardware Acceleration ({gpu_name})")
-            return True
+        if res.returncode == 0 and res.stdout.strip():
+            parts = [p.strip() for p in res.stdout.strip().splitlines()[0].split(",")]
+            name = parts[0]
+            mb = float(parts[1]) if len(parts) > 1 and parts[1].replace('.', '', 1).isdigit() else 6144.0
+            return True, name, round(mb / 1024, 1)
     except Exception:
         pass
-    print("[-] No GPU Detected: Falling back to CPU rendering (libx264)")
+
+    # 2. PyTorch CUDA
+    try:
+        import torch
+        if torch.cuda.is_available():
+            name = torch.cuda.get_device_name(0)
+            try:
+                vram_bytes = torch.cuda.get_device_properties(0).total_memory
+                vram_gb = round(vram_bytes / (1024 ** 3), 1)
+            except Exception:
+                vram_gb = 6.0
+            return True, name, vram_gb
+    except Exception:
+        pass
+
+    # 3. Windows CimInstance
+    try:
+        cmd = 'powershell -Command "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"'
+        out = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
+        for l in out.splitlines():
+            line_str = l.strip()
+            if any(k in line_str.lower() for k in ["nvidia", "geforce", "gtx", "rtx"]):
+                vram_gb = 6.0 if "1660" in line_str else 4.0
+                return True, line_str, vram_gb
+    except Exception:
+        pass
+
+    return False, "", 0.0
+
+def detect_nvidia_gpu():
+    """Returns True if NVIDIA GPU is detected, logging model name and VRAM."""
+    has_gpu, name, vram = get_nvidia_gpu_info()
+    if has_gpu:
+        print(f"[+] 🎮 NVIDIA GPU Active: {name} | VRAM: {vram} GB | Hardware Acceleration: NVENC + CUDA", flush=True)
+        return True
+    print("[-] No discrete GPU Detected: Falling back to CPU rendering (libx264)", flush=True)
     return False
 # ---------------------------------------------------------------------------
 
@@ -245,13 +282,23 @@ def generate_srt(audio_path, srt_output_path, hardware_mode="Standard", device="
         
     print(f"   > ⚙️ Whisper Threads Allocated: {cpu_threads} | RAM Budget: {allocated_gb}GB / {total_gb}GB (75%)") 
     
-    whisper_device = "cuda" if device == "cuda" else "cpu"
-    compute_type = "int8_float16" if whisper_device == "cuda" else "int8"
+    has_nvidia, gpu_name, vram_gb = get_nvidia_gpu_info()
+    use_cuda = (device == "cuda") or has_nvidia
+    whisper_device = "cuda" if use_cuda else "cpu"
     
-    try:
-        model = WhisperModel("base", device=whisper_device, compute_type=compute_type, cpu_threads=cpu_threads)
-    except Exception as e:
+    model = None
+    if whisper_device == "cuda":
+        try:
+            print(f"   > 🚀 Initializing Whisper AI on NVIDIA GPU ({gpu_name or 'GTX 1660 Super 6GB'} | CUDA FP16)...", flush=True)
+            model = WhisperModel("base", device="cuda", compute_type="float16")
+            print("   > ✅ Whisper AI GPU Engine loaded successfully on CUDA!", flush=True)
+        except Exception as e:
+            print(f"   > ℹ️ CUDA Whisper runtime notice ({e}). Running multi-threaded CPU Whisper...", flush=True)
+            model = None
+
+    if model is None:
         model = WhisperModel("base", device="cpu", compute_type="int8", cpu_threads=cpu_threads)
+        print(f"   > ⚙️ Whisper running on CPU multi-threaded engine ({cpu_threads} threads).", flush=True)
     
     audio = AudioSegment.from_file(audio_path)
     chunk_length_ms = 60 * 1000
@@ -361,7 +408,122 @@ def get_media_duration(file_path):
     except Exception:
         return 120.0
 
-def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, final_output_path, sub_size="24", sub_color="Yellow", sub_position="Bottom", hardware_mode="Standard", device="cpu", bg_music_enabled=True, progress_callback=None):
+def has_audio_stream(file_path):
+    """Returns True if the media file contains at least one audio stream."""
+    if not file_path or not os.path.exists(file_path):
+        return False
+    ffprobe_bin = FFPROBE_PATH if os.path.exists(FFPROBE_PATH) else "ffprobe"
+    try:
+        cmd = [
+            ffprobe_bin,
+            "-v", "error",
+            "-select_streams", "a",
+            "-show_entries", "stream=codec_type",
+            "-of", "csv=p=0",
+            file_path
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        return "audio" in res.stdout.lower()
+    except Exception:
+        return False
+
+def get_next_background_video():
+    """
+    Scans the 'bg' folder (and fallbacks: 'background_videos', 'background_music')
+    for video files (.mp4, .mov, .mkv, .webm, .avi).
+    Rotates through them sequentially using 'last_bg_video_index.txt'.
+    """
+    search_dirs = ["bg", "background_videos", "background_music"]
+    valid_exts = ('.mp4', '.mov', '.mkv', '.webm', '.avi')
+    
+    candidate_dir = None
+    files = []
+    
+    for d in search_dirs:
+        dir_path = os.path.join(os.getcwd(), d) if not os.path.isabs(d) else d
+        if os.path.exists(dir_path):
+            found = sorted([os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.lower().endswith(valid_exts)])
+            if found:
+                candidate_dir = dir_path
+                files = found
+                break
+                
+    if not files:
+        os.makedirs(os.path.join(os.getcwd(), "bg"), exist_ok=True)
+        return None
+        
+    tracker_file = os.path.join(os.getcwd(), "last_bg_video_index.txt")
+    index = 0
+    if os.path.exists(tracker_file):
+        try:
+            with open(tracker_file, "r") as f:
+                index = int(f.read().strip())
+        except Exception:
+            index = 0
+            
+    if index >= len(files):
+        index = 0
+        
+    selected_file = files[index]
+    next_index = (index + 1) % len(files)
+    
+    try:
+        with open(tracker_file, "w") as f:
+            f.write(str(next_index))
+    except Exception:
+        pass
+        
+    print(f"   > 🎥 Loaded Background Video from '{os.path.basename(candidate_dir)}': {os.path.basename(selected_file)} (Clip {index + 1}/{len(files)})", flush=True)
+    return selected_file
+
+def get_next_background_music():
+    """
+    Scans 'bg', 'background_music' for audio/music files (.mp3, .wav, .m4a, .mp4, .mov).
+    Rotates through them sequentially using 'last_bg_index.txt'.
+    """
+    search_dirs = ["bg", "background_music"]
+    valid_exts = ('.mp3', '.wav', '.m4a', '.mp4', '.mov')
+    
+    files = []
+    for d in search_dirs:
+        dir_path = os.path.join(os.getcwd(), d) if not os.path.isabs(d) else d
+        if os.path.exists(dir_path):
+            found = sorted([os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.lower().endswith(valid_exts)])
+            if found:
+                files = found
+                break
+                
+    if not files:
+        return None
+        
+    tracker_file = os.path.join(os.getcwd(), "last_bg_index.txt")
+    index = 0
+    if os.path.exists(tracker_file):
+        try:
+            with open(tracker_file, "r") as f:
+                index = int(f.read().strip())
+        except Exception:
+            index = 0
+            
+    if index >= len(files):
+        index = 0
+        
+    selected_file = files[index]
+    next_index = (index + 1) % len(files)
+    
+    try:
+        with open(tracker_file, "w") as f:
+            f.write(str(next_index))
+    except Exception:
+        pass
+        
+    return selected_file
+
+def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, final_output_path, sub_size="24", sub_color="Yellow", sub_position="Bottom", hardware_mode="Standard", device="cpu", bg_music_enabled=True, progress_callback=None, bg_video_path=None):
+    # Auto-resolve background video from 'bg' folder if not explicitly supplied
+    if not bg_video_path:
+        bg_video_path = get_next_background_video()
+
     # Enforce strict local directory routing to purge any legacy AppData path inputs
     if srt_path and not os.path.exists(srt_path):
         srt_path = os.path.join(os.getcwd(), "lf_temp", os.path.basename(srt_path))
@@ -373,7 +535,9 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
         final_output_path = os.path.join(os.getcwd(), "lf_output", os.path.basename(final_output_path))
 
     total_gb, allocated_gb, _ = _get_ram_allocation()
-    print(f"   > 🎬 Booting FFmpeg Render Engine | [+] Dynamic Memory: Total {total_gb}GB | Allocating {allocated_gb}GB (75%)", flush=True)
+    has_nvidia, gpu_name, vram_gb = get_nvidia_gpu_info()
+    gpu_banner = f" | [+] GPU: {gpu_name or 'NVIDIA GTX 1660 Super'} ({vram_gb}GB VRAM - NVENC/CUDA ⚡)" if has_nvidia or device == "cuda" else ""
+    print(f"   > 🎬 Booting FFmpeg Render Engine | Dynamic RAM: {allocated_gb}GB / {total_gb}GB (75%){gpu_banner}", flush=True)
     ffmpeg_exe = FFMPEG_PATH if os.path.exists(FFMPEG_PATH) else "ffmpeg"
 
     # Calculate audio duration precisely
@@ -381,16 +545,6 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
     if audio_dur <= 0:
         audio_dur = 120.0
     dur_str = f"{audio_dur:.2f}"
-
-    # Image input: bounded by audio duration to eliminate demuxer infinite loops
-    cmd = [
-        ffmpeg_exe,
-        '-loop', '1',
-        '-t', dur_str,
-        '-framerate', '24',
-        '-i', image_path,
-        '-i', audio_path
-    ]
 
     # SSA Primary Colors: Yellow, White, Green, Cyan
     COLOR_MAP = {
@@ -401,34 +555,79 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
     }
     ssa_color = COLOR_MAP.get(sub_color, "&H0000FFFF")
 
-    # Build video filter with or without subtitles
-    video_filter = "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
-    if srt_path and os.path.exists(srt_path):
-        # Format and escape SRT path for FFmpeg filter on Windows
-        clean_srt = os.path.abspath(srt_path).replace("\\", "/")
-        clean_srt = clean_srt.replace(":", "\\:")
-        clean_srt = clean_srt.replace("'", "'\\''")
-        video_filter += f",subtitles=filename='{clean_srt}':force_style='Alignment=2,FontSize={sub_size},PrimaryColour={ssa_color},Outline=2,Shadow=1,MarginV=20,WrapStyle=2'"
-    video_filter += "[vout]"
+    # Determine video mode: Moving Background Video (from 'bg' folder) OR Still Image
+    has_bg_video = bool(bg_video_path and os.path.exists(bg_video_path))
+    if has_bg_video:
+        print(f"   > 🎥 Moving Background Video ACTIVE: {os.path.basename(bg_video_path)} (from bg folder)", flush=True)
+        # Input 0: Background video looped infinitely (bounded by -t dur_str on output)
+        cmd = [
+            ffmpeg_exe,
+            '-stream_loop', '-1',
+            '-i', bg_video_path,
+            '-i', audio_path
+        ]
+        video_filter = "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=24"
+        if srt_path and os.path.exists(srt_path):
+            clean_srt = os.path.abspath(srt_path).replace("\\", "/")
+            clean_srt = clean_srt.replace(":", "\\:")
+            clean_srt = clean_srt.replace("'", "'\\''")
+            video_filter += f",subtitles=filename='{clean_srt}':force_style='Alignment=2,FontSize={sub_size},PrimaryColour={ssa_color},Outline=2,Shadow=1,MarginV=20,WrapStyle=2'"
+        video_filter += "[vout]"
 
-    # Conditionally mix background music if enabled
-    if bg_music_enabled and bg_music_path and os.path.exists(bg_music_path):
-        is_video = bg_music_path.lower().endswith(('.mp4', '.mov'))
-        if is_video:
-            print(f"   > 🎵 Extracting & Looping audio stream from background video: {os.path.basename(bg_music_path)}", flush=True)
-        else:
+        # Audio handling for moving background video
+        bg_has_audio = bg_music_enabled and has_audio_stream(bg_video_path)
+        if bg_has_audio:
+            print(f"   > 🎵 Mixing audio stream from background video: {os.path.basename(bg_video_path)} (volume: 8%)", flush=True)
+            filter_complex = (
+                f"[1:a]aresample=48000,volume=1.0[a1];[0:a]aresample=48000,volume=0.08[a2];"
+                f"[a1][a2]amix=inputs=2:duration=first:dropout_transition=2[aout];"
+                f"{video_filter}"
+            )
+            audio_map = '[aout]'
+        elif bg_music_enabled and bg_music_path and os.path.exists(bg_music_path) and bg_music_path != bg_video_path:
             print(f"   > 🎵 Injecting & Looping Background Music: {os.path.basename(bg_music_path)}", flush=True)
-        cmd.extend(['-stream_loop', '-1', '-i', bg_music_path])
-        filter_complex = (
-            f"[1:a]aresample=48000,volume=1.0[a1];[2:a]aresample=48000,volume=0.08[a2];"
-            f"[a1][a2]amix=inputs=2:duration=first:dropout_transition=2[aout];"
-            f"{video_filter}"
-        )
-        audio_map = '[aout]'
+            cmd.extend(['-stream_loop', '-1', '-i', bg_music_path])
+            filter_complex = (
+                f"[1:a]aresample=48000,volume=1.0[a1];[2:a]aresample=48000,volume=0.08[a2];"
+                f"[a1][a2]amix=inputs=2:duration=first:dropout_transition=2[aout];"
+                f"{video_filter}"
+            )
+            audio_map = '[aout]'
+        else:
+            print("   > 🎵 Voiceover audio stream only (silent background video).", flush=True)
+            filter_complex = f"[1:a]aresample=48000[aout];{video_filter}"
+            audio_map = '[aout]'
     else:
-        print("   > 🎵 Background music disabled or missing. Rendering voiceover audio stream only.", flush=True)
-        filter_complex = f"[1:a]aresample=48000[aout];{video_filter}"
-        audio_map = '[aout]'
+        print(f"   > 🖼️ Still Image Video Mode ACTIVE: {os.path.basename(image_path)}", flush=True)
+        cmd = [
+            ffmpeg_exe,
+            '-loop', '1',
+            '-t', dur_str,
+            '-framerate', '24',
+            '-i', image_path,
+            '-i', audio_path
+        ]
+        video_filter = "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
+        if srt_path and os.path.exists(srt_path):
+            clean_srt = os.path.abspath(srt_path).replace("\\", "/")
+            clean_srt = clean_srt.replace(":", "\\:")
+            clean_srt = clean_srt.replace("'", "'\\''")
+            video_filter += f",subtitles=filename='{clean_srt}':force_style='Alignment=2,FontSize={sub_size},PrimaryColour={ssa_color},Outline=2,Shadow=1,MarginV=20,WrapStyle=2'"
+        video_filter += "[vout]"
+
+        if bg_music_enabled and bg_music_path and os.path.exists(bg_music_path):
+            print(f"   > 🎵 Injecting & Looping Background Music: {os.path.basename(bg_music_path)}", flush=True)
+            cmd.extend(['-stream_loop', '-1', '-i', bg_music_path])
+            filter_complex = (
+                f"[1:a]aresample=48000,volume=1.0[a1];[2:a]aresample=48000,volume=0.08[a2];"
+                f"[a1][a2]amix=inputs=2:duration=first:dropout_transition=2[aout];"
+                f"{video_filter}"
+            )
+            audio_map = '[aout]'
+        else:
+            print("   > 🎵 Background music disabled or missing. Rendering voiceover audio stream only.", flush=True)
+            filter_complex = f"[1:a]aresample=48000[aout];{video_filter}"
+            audio_map = '[aout]'
 
     # Dynamic FFmpeg thread count: scale with CPU cores
     logical_cores = psutil.cpu_count(logical=True) or 4
@@ -436,13 +635,28 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
 
     # Build primary and fallback encoder configurations
     encoders_to_try = []
-    if is_nvenc_functional():
-        encoders_to_try.append(('NVIDIA NVENC (h264_nvenc)', ['-c:v', 'h264_nvenc', '-preset', 'fast', '-rc', 'constqp', '-qp', '23']))
+    has_nvidia, gpu_name, vram_gb = get_nvidia_gpu_info()
+    use_nvenc = has_nvidia or (device == "cuda") or is_nvenc_functional()
+
+    if use_nvenc:
+        print(f"   > ⚡ NVIDIA NVENC Hardware Engine Engaged ({gpu_name or 'GTX 1660 Super'}, {vram_gb}GB VRAM)", flush=True)
+        # Primary: High-speed NVENC with Turing VBR Constant Quality 23 and spatial AQ
+        encoders_to_try.append((
+            f'NVIDIA NVENC Hardware Engine ({gpu_name or "GTX 1660 Super 6GB"})',
+            ['-c:v', 'h264_nvenc', '-preset', 'fast', '-rc', 'vbr', '-cq', '23', '-b:v', '0', '-spatial-aq', '1']
+        ))
+        # Fallback 1: Universal NVENC compatibility profile
+        encoders_to_try.append((
+            'NVIDIA NVENC Universal Compatibility (h264_nvenc)',
+            ['-c:v', 'h264_nvenc', '-preset', 'fast', '-cq', '23']
+        ))
     elif device == "amf":
         encoders_to_try.append(('AMD AMF (h264_amf)', ['-c:v', 'h264_amf']))
 
-    # Universal high-speed stillimage CPU encoder (renders 30min in ~20s)
-    encoders_to_try.append(('High-Speed Stillimage Engine (libx264)', ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'stillimage', '-crf', '23']))
+    if has_bg_video:
+        encoders_to_try.append(('High-Speed Video Engine (libx264 CPU fallback)', ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23']))
+    else:
+        encoders_to_try.append(('High-Speed Stillimage Engine (libx264 CPU fallback)', ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'stillimage', '-crf', '23']))
 
     for enc_name, enc_args in encoders_to_try:
         print(f"   > 🎬 Starting Video Rendering via: {enc_name} (Threads: {threads})...", flush=True)
@@ -493,7 +707,7 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
 
         # Kick off progress bar in GUI at 0%
         if progress_callback:
-            progress_callback(0, "Rendering Video (0%)")
+            progress_callback(0, "Rendering Video (0%) | Rate: Starting...")
 
         while True:
             line = process.stdout.readline()
@@ -533,18 +747,20 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
                                     except Exception:
                                         pass
 
-                                # 1. Smooth GUI Progress Bar: Update whenever percentage changes (every 1%)
+                                rate_display = current_speed if current_speed else "Active"
+                                if current_fps:
+                                    rate_display += f" ({current_fps} FPS)"
+
+                                # 1. Smooth GUI Progress Bar: Update on every 1% change with clear Proceeding Rate
                                 if progress_callback and pct != last_callback_pct:
                                     last_callback_pct = pct
-                                    gui_label = f"Rendering Video {pct}% ({cur_m:02d}:{cur_s:02d}/{tot_m:02d}:{tot_s:02d})"
-                                    if current_speed:
-                                        gui_label += f" [{current_speed}]"
+                                    gui_label = f"Rendering Video {pct}% | Rate: {rate_display} | {cur_m:02d}:{cur_s:02d}/{tot_m:02d}:{tot_s:02d}"
                                     if eta_str:
-                                        gui_label += f" [ETA {eta_str}]"
+                                        gui_label += f" | ETA {eta_str}"
                                     progress_callback(pct, gui_label)
 
-                                # 2. Live Console Log: Visual ASCII progress bar updated every 2-3% or 1.5s
-                                if pct != last_print_pct and ((pct - last_print_pct) >= 3 or (now - last_print_time) >= 1.5):
+                                # 2. Live Console Log: Visual ASCII progress bar displaying Proceeding Rate
+                                if pct != last_print_pct and ((pct - last_print_pct) >= 2 or (now - last_print_time) >= 1.5):
                                     last_print_pct = pct
                                     last_print_time = now
                                     bar_len = 25
@@ -552,16 +768,15 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
                                     empty = bar_len - filled
                                     bar_str = "█" * filled + "░" * empty
 
-                                    info_parts = [f"{cur_m:02d}:{cur_s:02d} / {tot_m:02d}:{tot_s:02d}"]
-                                    if current_speed:
-                                        info_parts.append(f"Speed: {current_speed}")
+                                    rate_info = f"Rate: {current_speed}" if current_speed else "Rate: Active"
                                     if current_fps:
-                                        info_parts.append(f"FPS: {current_fps}")
-                                    if eta_str:
-                                        info_parts.append(f"ETA: {eta_str}")
-                                    details = " | ".join(info_parts)
+                                        rate_info += f" ({current_fps} FPS)"
+                                    
+                                    time_info = f"{cur_m:02d}:{cur_s:02d}/{tot_m:02d}:{tot_s:02d}"
+                                    eta_info = f"ETA: {eta_str}" if eta_str else ""
+                                    details = " | ".join(filter(None, [rate_info, time_info, eta_info]))
 
-                                    print(f"[+] 🎬 Render Progress: [{bar_str}] {pct:2d}% ({details})", flush=True)
+                                    print(f"[+] 🎬 Render Progress: [{bar_str}] {pct:2d}% | {details}", flush=True)
                     except Exception:
                         pass
 
@@ -569,9 +784,9 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
         err_thread.join(timeout=2.0)
 
         if process.returncode == 0:
-            print(f"[+] 🎬 Video Render Progress: [{'█' * 15}] 100% (Render Complete)", flush=True)
+            print(f"[+] 🎬 Video Render Progress: [{'█' * 25}] 100% (Render Complete)", flush=True)
             if progress_callback:
-                progress_callback(100, "Rendering Complete")
+                progress_callback(100, "Rendering Complete (100%)")
             print(f"   > ✅ Final Video successfully rendered: {final_output_path}", flush=True)
             return True
         else:
@@ -584,36 +799,3 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
 
     print("   > ❌ FFmpeg Render Failed across all encoders.", flush=True)
     return False
-
-def get_next_background_music():
-    bg_dir = "background_music"
-    os.makedirs(bg_dir, exist_ok=True)
-    valid_exts = ('.mp3', '.wav', '.mp4', '.mov')
-    if not os.path.exists(bg_dir):
-        return None
-    files = sorted([os.path.join(bg_dir, f) for f in os.listdir(bg_dir) if f.lower().endswith(valid_exts)])
-    if not files:
-        return None
-        
-    tracker_file = "last_bg_index.txt"
-    index = 0
-    if os.path.exists(tracker_file):
-        try:
-            with open(tracker_file, "r") as f:
-                index = int(f.read().strip())
-        except:
-            index = 0
-            
-    if index >= len(files):
-        index = 0
-        
-    selected_file = files[index]
-    next_index = (index + 1) % len(files)
-    
-    try:
-        with open(tracker_file, "w") as f:
-            f.write(str(next_index))
-    except:
-        pass
-        
-    return selected_file

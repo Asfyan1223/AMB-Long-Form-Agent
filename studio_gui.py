@@ -58,11 +58,13 @@ LF_TEMP = os.path.join(BASE_DIR, "lf_temp")
 LF_OUTPUT = os.path.join(BASE_DIR, "lf_output")
 LF_SCRIPTS = os.path.join(BASE_DIR, "lf_scripts")
 LF_ASSETS = os.path.join(BASE_DIR, "lf_assets")
+LF_BG = os.path.join(BASE_DIR, "bg")
 
 os.makedirs(LF_TEMP, exist_ok=True)
 os.makedirs(LF_OUTPUT, exist_ok=True)
 os.makedirs(LF_SCRIPTS, exist_ok=True)
 os.makedirs(LF_ASSETS, exist_ok=True)
+os.makedirs(LF_BG, exist_ok=True)
 os.makedirs(creds_vault_dir, exist_ok=True)
 
 # --- DYNAMIC RAM BOOT LOG ---
@@ -193,7 +195,8 @@ class IslamicReelsStudio(ctk.CTk):
         self.settings_btn = ctk.CTkButton(self.header_frame, text="🔒 Settings & Profiles", font=ctk.CTkFont(weight="bold"), fg_color="#E67E22", hover_color="#D35400", corner_radius=8, width=170, height=40, command=self.check_password_and_open)
         self.settings_btn.pack(side="right")
         
-        self.active_display = ctk.CTkLabel(self, text=f"Currently Managing: {self.active_profile} | GPU: {self.detected_gpu.upper()}", font=ctk.CTkFont(size=13, weight="bold"), text_color="#A29BFE")
+        disp = getattr(self, "gpu_display_name", "") or self.detected_gpu.upper()
+        self.active_display = ctk.CTkLabel(self, text=f"Currently Managing: {self.active_profile} | GPU: {disp} ⚡", font=ctk.CTkFont(size=13, weight="bold"), text_color="#A29BFE")
         self.active_display.pack(pady=(0, 10))
 
         # Status Uplink Card
@@ -219,18 +222,26 @@ class IslamicReelsStudio(ctk.CTk):
         self.log_textbox.configure(state="disabled")
         sys.stdout = RedirectText(self.log_textbox, self)
 
-        # Multi-Stage Task Progress Bar Card
+        # Multi-Stage Task Progress Bar Card with Proceeding Rate Display
         self.upload_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=12)
         self.upload_card.pack(pady=(0, 6), padx=40, fill="x")
         upload_inner = ctk.CTkFrame(self.upload_card, fg_color="transparent")
-        upload_inner.pack(fill="x", padx=20, pady=10)
-        self.task_progress_label = ctk.CTkLabel(upload_inner, text="⚡ Task Progress:", font=ctk.CTkFont(weight="bold", size=13))
-        self.task_progress_label.pack(side="left", padx=(0, 10))
-        self.upload_progress_bar = ctk.CTkProgressBar(upload_inner, width=480, height=18, corner_radius=9, progress_color="#00D2FF", fg_color="#2B2B2B")
+        upload_inner.pack(fill="x", padx=20, pady=(8, 10))
+
+        # Top row: Task Stage & Proceeding Rate (Left) + Percentage (Right)
+        progress_info_row = ctk.CTkFrame(upload_inner, fg_color="transparent")
+        progress_info_row.pack(fill="x", pady=(0, 6))
+
+        self.task_progress_label = ctk.CTkLabel(progress_info_row, text="⚡ Task Progress: Idle", font=ctk.CTkFont(weight="bold", size=13), anchor="w")
+        self.task_progress_label.pack(side="left", fill="x", expand=True)
+
+        self.upload_pct_label = ctk.CTkLabel(progress_info_row, text="Idle", font=ctk.CTkFont(size=13, weight="bold"), text_color="#A29BFE", anchor="e")
+        self.upload_pct_label.pack(side="right")
+
+        # Bottom row: Full-Width Visual Progress Bar
+        self.upload_progress_bar = ctk.CTkProgressBar(upload_inner, height=18, corner_radius=9, progress_color="#00D2FF", fg_color="#2B2B2B")
         self.upload_progress_bar.set(0)
-        self.upload_progress_bar.pack(side="left", padx=(0, 12))
-        self.upload_pct_label = ctk.CTkLabel(upload_inner, text="Idle", font=ctk.CTkFont(size=13, weight="bold"), text_color="#A29BFE", width=110)
-        self.upload_pct_label.pack(side="left")
+        self.upload_progress_bar.pack(fill="x", expand=True)
 
         # Manual Script Browse Row (enabled/disabled by lf_manual_script_enabled setting)
         self.manual_script_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=12)
@@ -364,29 +375,69 @@ class IslamicReelsStudio(ctk.CTk):
 
 
     def probe_gpu(self):
-
         device = "cpu"
+        self.gpu_display_name = "CPU"
+        
+        # 1. Probe via nvidia-smi (Official NVIDIA driver CLI - instant & accurate for GTX 1660 Super)
+        try:
+            import subprocess
+            res = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=3
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                line = res.stdout.strip().splitlines()[0]
+                parts = [p.strip() for p in line.split(",")]
+                gpu_name = parts[0]
+                vram_mb = parts[1] if len(parts) > 1 else "6144"
+                vram_gb = round(float(vram_mb) / 1024, 1) if vram_mb.replace('.', '', 1).isdigit() else 6.0
+                device = "cuda"
+                self.gpu_display_name = f"{gpu_name} ({vram_gb}GB VRAM - CUDA/NVENC)"
+                print(f"[SYSTEM] 🚀 NVIDIA GPU Detected: {gpu_name} ({vram_gb} GB VRAM) | Hardware Acceleration: CUDA & NVENC ACTIVE")
+                return device
+        except Exception:
+            pass
+
+        # 2. Probe via PyTorch CUDA
         try:
             import torch
             if torch.cuda.is_available():
                 device = "cuda"
-                print("[SYSTEM] GPU Probe: NVIDIA CUDA detected.")
+                gpu_name = torch.cuda.get_device_name(0)
+                try:
+                    vram_bytes = torch.cuda.get_device_properties(0).total_memory
+                    vram_gb = round(vram_bytes / (1024 ** 3), 1)
+                except Exception:
+                    vram_gb = 6.0
+                self.gpu_display_name = f"{gpu_name} ({vram_gb}GB VRAM - CUDA/NVENC)"
+                print(f"[SYSTEM] 🚀 NVIDIA CUDA Detected: {gpu_name} ({vram_gb} GB VRAM) - Acceleration ACTIVE")
                 return device
-        except ImportError:
+        except Exception:
             pass
-        
+
+        # 3. Probe via Windows CimInstance VideoController
         try:
             import subprocess
             cmd = "powershell -Command \"Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name\""
             output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
-            if "AMD" in output or "Radeon" in output:
-                device = "amf"
-                print("[SYSTEM] GPU Probe: AMD Radeon detected (AMF).")
-                return device
+            for line in output.splitlines():
+                l = line.strip()
+                if any(k in l.lower() for k in ["nvidia", "geforce", "gtx", "rtx"]):
+                    device = "cuda"
+                    vram_str = "6GB" if "1660" in l else "VRAM"
+                    self.gpu_display_name = f"{l} ({vram_str} - CUDA/NVENC)"
+                    print(f"[SYSTEM] 🚀 NVIDIA GPU Controller Detected: {l} | Hardware Acceleration: CUDA & NVENC ACTIVE")
+                    return device
+                elif "amd" in l.lower() or "radeon" in l.lower():
+                    device = "amf"
+                    self.gpu_display_name = f"{l} (AMD AMF)"
+                    print(f"[SYSTEM] 🚀 AMD GPU Detected: {l} (AMF Active)")
+                    return device
         except Exception:
             pass
-            
-        print("[SYSTEM] GPU Probe: Defaulting to CPU.")
+
+        print("[SYSTEM] GPU Probe: No discrete GPU detected. Defaulting to CPU.")
+        self.gpu_display_name = "CPU (Software)"
         return device
 
     def start_discord_listener(self):
@@ -520,7 +571,10 @@ class IslamicReelsStudio(ctk.CTk):
 
     def populate_main_ui(self):
         gpu = self.get_active_setting("hardware_profile", "cpu")
-        self.active_display.configure(text=f"Currently Managing: {self.active_profile} | GPU: {gpu.upper()}")
+        disp = getattr(self, "gpu_display_name", "")
+        if not disp or (gpu != "cuda" and "NVIDIA" in disp):
+            disp = gpu.upper()
+        self.active_display.configure(text=f"Currently Managing: {self.active_profile} | GPU: {disp} ⚡")
         
         # Keep manual script settings in sync when active profile changes
         self.manual_script_path = self.get_active_setting("lf_manual_script_path", "")
@@ -1337,7 +1391,8 @@ class IslamicReelsStudio(ctk.CTk):
                 print("   > 🚫 Subtitles are disabled. Skipping subtitle generation.")
                 srt_out = None
             
-            # Resolve background music path dynamically
+            # Resolve background video and music dynamically
+            bg_video = long_form_composer.get_next_background_video()
             bg_music = settings.get("lf_bg_music", "")
             if not bg_music or not os.path.exists(bg_music):
                 bg_music = long_form_composer.get_next_background_music()
@@ -1363,7 +1418,8 @@ class IslamicReelsStudio(ctk.CTk):
                 hardware_mode=hw_mode,
                 device=hw_profile,
                 bg_music_enabled=bg_music_enabled,
-                progress_callback=self.update_task_progress
+                progress_callback=self.update_task_progress,
+                bg_video_path=bg_video
             )
             
             if success:
