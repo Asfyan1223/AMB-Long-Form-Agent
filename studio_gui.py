@@ -1717,14 +1717,23 @@ class IslamicReelsStudio(ctk.CTk):
                     print(f"   > 📂 Smart Resume: Found existing subtitle file: {srt_out}. Bypassing generation.")
                 else:
                     self.update_task_progress(50, "Transcribing Subtitles (Groq)")
-                    long_form_composer.generate_srt(
-                        audio_out, 
-                        srt_out, 
-                        hardware_mode=hw_mode,
-                        device=hw_profile,
-                        language=settings.get("lf_main_language", "English"),
-                        groq_api_keys=groq_keys
-                    )
+                    try:
+                        long_form_composer.generate_srt(
+                            audio_out, 
+                            srt_out, 
+                            hardware_mode=hw_mode,
+                            device=hw_profile,
+                            language=settings.get("lf_main_language", "English"),
+                            groq_api_keys=groq_keys
+                        )
+                    except Exception as e:
+                        print(f"   > ⚠️ Subtitle generation error: {e}. Ensuring fallback empty subtitle file...", flush=True)
+                        if not os.path.exists(srt_out):
+                            try:
+                                with open(srt_out, "w", encoding="utf-8") as sf:
+                                    sf.write("")
+                            except Exception:
+                                pass
                     self.update_task_progress(100, "Subtitles Ready")
             else:
                 print("   > 🚫 Subtitles are disabled. Skipping subtitle generation.")

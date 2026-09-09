@@ -50,6 +50,54 @@ def _get_ram_allocation():
     allocated_bytes = int(mem.total * 0.75)
     return round(total_gb, 1), round(allocated_gb, 1), allocated_bytes
 
+_cuda_dlls_registered = False
+def setup_cuda_dll_paths():
+    """Locates and registers NVIDIA CUDA/cuBLAS/cuDNN DLL directories with Windows OS."""
+    global _cuda_dlls_registered
+    if _cuda_dlls_registered or sys.platform != "win32":
+        return
+    try:
+        import site
+        search_dirs = []
+        if hasattr(site, 'getsitepackages'):
+            for sp in site.getsitepackages():
+                if os.path.isdir(sp): search_dirs.append(sp)
+        if hasattr(site, 'getusersitepackages'):
+            usp = site.getusersitepackages()
+            if os.path.isdir(usp): search_dirs.append(usp)
+        
+        base_dir = os.path.dirname(os.path.dirname(sys.executable))
+        venv_sp = os.path.join(base_dir, "Lib", "site-packages")
+        if os.path.isdir(venv_sp) and venv_sp not in search_dirs:
+            search_dirs.append(venv_sp)
+            
+        for sp in search_dirs:
+            nvidia_root = os.path.join(sp, "nvidia")
+            if os.path.isdir(nvidia_root):
+                for root, dirs, files in os.walk(nvidia_root):
+                    if any(f.lower().endswith(".dll") for f in files):
+                        try:
+                            os.add_dll_directory(root)
+                        except Exception:
+                            pass
+                        if root not in os.environ.get("PATH", ""):
+                            os.environ["PATH"] = root + os.pathsep + os.environ.get("PATH", "")
+        _cuda_dlls_registered = True
+    except Exception:
+        pass
+
+def is_cublas_available():
+    """Checks if NVIDIA cuBLAS libraries are installed and loadable for CTranslate2 / Whisper."""
+    setup_cuda_dll_paths()
+    import ctypes
+    for dll in ["cublas64_12.dll", "cublas64_11.dll"]:
+        try:
+            ctypes.CDLL(dll)
+            return True
+        except Exception:
+            pass
+    return False
+
 def get_nvidia_gpu_info():
     """Returns (has_nvidia: bool, gpu_name: str, vram_gb: float) for NVIDIA GPU (e.g. GTX 1660 Super 6GB)."""
     # 1. nvidia-smi (Fastest & direct via NVIDIA display driver)
@@ -283,7 +331,12 @@ def generate_srt(audio_path, srt_output_path, hardware_mode="Standard", device="
     print(f"   > ⚙️ Whisper Threads Allocated: {cpu_threads} | RAM Budget: {allocated_gb}GB / {total_gb}GB (75%)") 
     
     has_nvidia, gpu_name, vram_gb = get_nvidia_gpu_info()
-    use_cuda = (device == "cuda") or has_nvidia
+    use_cuda = (device == "cuda")
+    if use_cuda:
+        if not is_cublas_available():
+            print(f"   > ℹ️ CUDA Whisper Notice: cuBLAS library (cublas64_12.dll) not found on system. Switching to multi-threaded CPU Whisper...", flush=True)
+            use_cuda = False
+
     whisper_device = "cuda" if use_cuda else "cpu"
     
     model = None
@@ -318,10 +371,24 @@ def generate_srt(audio_path, srt_output_path, hardware_mode="Standard", device="
             chunk = audio[i * chunk_length_ms : (i + 1) * chunk_length_ms]
             chunk.export(temp_chunk_path, format="wav")
             
-            segments, _ = model.transcribe(temp_chunk_path, vad_filter=True, language=whisper_lang, word_timestamps=True)
+            segment_list = []
+            try:
+                segments, _ = model.transcribe(temp_chunk_path, vad_filter=True, language=whisper_lang, word_timestamps=True)
+                segment_list = list(segments)
+            except Exception as e:
+                print(f"   > ⚠️ Whisper GPU transcription failed ({e}).", flush=True)
+                print(f"   > 🔄 Auto Hardware Fallback: Switching Whisper to multi-threaded CPU engine ({cpu_threads} threads)...", flush=True)
+                try:
+                    model = WhisperModel("base", device="cpu", compute_type="int8", cpu_threads=cpu_threads)
+                    segments, _ = model.transcribe(temp_chunk_path, vad_filter=True, language=whisper_lang, word_timestamps=True)
+                    segment_list = list(segments)
+                except Exception as e2:
+                    print(f"   > ❌ Whisper CPU transcription error on chunk {i+1}: {e2}", flush=True)
+                    segment_list = []
+
             time_offset = i * 60.0
             
-            for segment in segments:
+            for segment in segment_list:
                 segment_words = list(segment.words) if segment.words else []
                 if segment_words:
                     for idx in range(0, len(segment_words), 8):
