@@ -79,16 +79,14 @@ async def generate_tts(text_file, language, output_audio_path, voice_actor=None,
     """
     Synthesizes speech using Silero Neural TTS and saves 48000 Hz master audio.
     """
-    speaker = VOICE_ACTORS.get(voice_actor, "xenia")
-    mgr = get_silero_manager(sample_rate=48000)
-    
-    # Run CPU/GPU synthesis in a separate worker thread to avoid blocking the asyncio event loop
+    mgr = get_silero_manager()
     success = await asyncio.to_thread(
         mgr.generate_from_script,
         script_path_or_text=text_file,
         output_path=output_audio_path,
-        speaker=speaker,
+        speaker=voice_actor,
         sample_rate=48000,
+        language=language,
         progress_callback=progress_callback
     )
     return success

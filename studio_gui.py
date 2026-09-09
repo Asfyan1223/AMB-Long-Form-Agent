@@ -16,6 +16,7 @@ from tkinter import colorchooser, filedialog, messagebox, simpledialog
 import threading
 import sys
 import os
+import re
 import glob
 import json
 import time
@@ -220,7 +221,9 @@ class IslamicReelsStudio(ctk.CTk):
         self.log_textbox = ctk.CTkTextbox(self, width=820, height=200, fg_color="#0D0E0F", text_color="#00FF41", font=("Consolas", 12), corner_radius=10, border_width=1, border_color="#2B2B2B")
         self.log_textbox.pack(pady=10, padx=40, fill="both", expand=True)
         self.log_textbox.configure(state="disabled")
-        sys.stdout = RedirectText(self.log_textbox, self)
+        redirector = RedirectText(self.log_textbox, self)
+        sys.stdout = redirector
+        sys.stderr = redirector
 
         # Multi-Stage Task Progress Bar Card with Proceeding Rate Display
         self.upload_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=12)
@@ -243,24 +246,56 @@ class IslamicReelsStudio(ctk.CTk):
         self.upload_progress_bar.set(0)
         self.upload_progress_bar.pack(fill="x", expand=True)
 
-        # Manual Script Browse Row (enabled/disabled by lf_manual_script_enabled setting)
+        # Manual Mode Card: Script & Thumbnail Selection
         self.manual_script_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=12)
         self.manual_script_card.pack(pady=(0, 6), padx=40, fill="x")
         manual_inner = ctk.CTkFrame(self.manual_script_card, fg_color="transparent")
-        manual_inner.pack(fill="x", padx=20, pady=10)
-        ctk.CTkLabel(manual_inner, text="📄 Manual Script:", font=ctk.CTkFont(weight="bold", size=13)).pack(side="left", padx=(0, 10))
-        self.manual_script_entry = ctk.CTkEntry(manual_inner, placeholder_text="Select a .txt script file...", font=ctk.CTkFont(size=12))
+        manual_inner.pack(fill="x", padx=20, pady=(10, 10))
+
+        # Row 1: Manual Script
+        script_row = ctk.CTkFrame(manual_inner, fg_color="transparent")
+        script_row.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(script_row, text="📄 Manual Script:", font=ctk.CTkFont(weight="bold", size=13), width=130, anchor="w").pack(side="left")
+        self.manual_script_entry = ctk.CTkEntry(script_row, placeholder_text="Select a .txt script file...", font=ctk.CTkFont(size=12))
         self.manual_script_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.manual_script_browse_btn = ctk.CTkButton(
-            manual_inner, text="📁 Browse", width=100, height=30,
+            script_row, text="📁 Browse Script", width=120, height=30,
             corner_radius=8, fg_color="#3A3E41", hover_color="#4A4E51",
             command=self._browse_manual_script
         )
         self.manual_script_browse_btn.pack(side="right")
-        # Store selected path as instance variable
+
+        # Row 2: Manual Thumbnail Picture
+        thumb_row = ctk.CTkFrame(manual_inner, fg_color="transparent")
+        thumb_row.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(thumb_row, text="🖼️ Thumbnail Pic:", font=ctk.CTkFont(weight="bold", size=13), width=130, anchor="w").pack(side="left")
+        self.manual_thumb_entry = ctk.CTkEntry(thumb_row, placeholder_text="Select thumbnail picture (.jpg, .png, .webp)...", font=ctk.CTkFont(size=12))
+        self.manual_thumb_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.manual_thumb_browse_btn = ctk.CTkButton(
+            thumb_row, text="📁 Browse Image", width=120, height=30,
+            corner_radius=8, fg_color="#3A3E41", hover_color="#4A4E51",
+            command=self._browse_manual_thumbnail
+        )
+        self.manual_thumb_browse_btn.pack(side="right")
+
+        # Row 3: Instant Render Button
+        action_row = ctk.CTkFrame(manual_inner, fg_color="transparent")
+        action_row.pack(fill="x", pady=(2, 0))
+        self.render_manual_btn = ctk.CTkButton(
+            action_row, text="🎬 RENDER MANUAL VIDEO NOW (Script + Thumbnail)",
+            height=34, corner_radius=8, font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#8E44AD", hover_color="#732D91",
+            command=self.trigger_render_manual_now
+        )
+        self.render_manual_btn.pack(fill="x")
+
+        # Store selected paths as instance variables
         self.manual_script_path = self.get_active_setting("lf_manual_script_path", "")
         if self.manual_script_path:
             self.manual_script_entry.insert(0, self.manual_script_path)
+        self.manual_thumbnail_path = self.get_active_setting("lf_manual_thumbnail_path", "")
+        if self.manual_thumbnail_path:
+            self.manual_thumb_entry.insert(0, self.manual_thumbnail_path)
 
 
         # Control and Action Buttons Card
@@ -313,6 +348,31 @@ class IslamicReelsStudio(ctk.CTk):
         # Set initial state of the Manual Script browse button
         self.after(200, self.refresh_manual_script_ui)
 
+        # Background pre-warm for Silero Neural TTS and voice tests (Zero-delay Play Test)
+        def _prewarm_tts():
+            try:
+                from silero_manager import get_silero_manager
+                mgr = get_silero_manager()
+                mgr.preload_models(['ru', 'en'])
+                test_dir = os.path.join(LF_TEMP, "test_voices")
+                os.makedirs(test_dir, exist_ok=True)
+                sample_voices = [
+                    ('xenia', 'ru', 'Здравствуйте! Это проверка голоса студии АМБ.'),
+                    ('aidar', 'ru', 'Здравствуйте! Это проверка мужского голоса студии АМБ.'),
+                    ('xenia', 'en', 'Hello! This is a voice test for AMB Studio.'),
+                    ('aidar', 'en', 'Hello! This is a deep voice test for AMB Studio.')
+                ]
+                for spk, lng, txt in sample_voices:
+                    vp = os.path.join(test_dir, f"test_{spk}_{lng}.wav")
+                    if not os.path.exists(vp):
+                        try:
+                            mgr.generate(txt, output_path=vp, speaker=spk, language=lng)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        threading.Thread(target=_prewarm_tts, daemon=True).start()
+
     def update_task_progress(self, pct, stage_text="Processing..."):
         """Thread-safe multi-stage progress bar updater for TTS, Subtitles, Rendering, and Uploading."""
         def _do_update():
@@ -345,15 +405,31 @@ class IslamicReelsStudio(ctk.CTk):
             pass
 
     def _browse_manual_script(self):
-        """Opens a file picker for .txt scripts and stores the selected path."""
+        """Opens a file picker for .txt scripts."""
         from tkinter import filedialog
         file_path = filedialog.askopenfilename(
             title="Select Script File",
             filetypes=[("Text Script Files", "*.txt"), ("All Files", "*.*")]
         )
         if file_path:
+            # Validate that script is not empty
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read().strip()
+                if not content:
+                    messagebox.showwarning(
+                        "Empty Script File",
+                        f"The selected file '{os.path.basename(file_path)}' is empty (0 bytes)!\n\n"
+                        "Please open it on your Desktop, paste or write your script into it, save it (Ctrl+S), and select it again."
+                    )
+                    return
+            except Exception as e:
+                messagebox.showerror("Read Error", f"Could not read script file: {e}")
+                return
+
             self.manual_script_path = file_path
             self.set_active_setting("lf_manual_script_path", file_path)
+            self.set_active_setting("lf_manual_script_enabled", True)
             self.save_settings()
             try:
                 self.manual_script_entry.delete(0, "end")
@@ -361,15 +437,89 @@ class IslamicReelsStudio(ctk.CTk):
             except Exception:
                 pass
             print(f"   > 📄 Manual script selected: {file_path}")
+            print(f"   > 💡 Script loaded! Select a Thumbnail Picture (optional) and click 'RENDER MANUAL VIDEO NOW'.")
+
+    def _browse_manual_thumbnail(self):
+        """Opens a file picker for thumbnail/cover images (.jpg, .jpeg, .png, .webp)."""
+        from tkinter import filedialog
+        file_path = filedialog.askopenfilename(
+            title="Select Thumbnail Image",
+            filetypes=[("Image Files", "*.jpg *.jpeg *.png *.webp"), ("All Files", "*.*")]
+        )
+        if file_path:
+            self.manual_thumbnail_path = file_path
+            self.set_active_setting("lf_manual_thumbnail_path", file_path)
+            self.save_settings()
+            try:
+                self.manual_thumb_entry.delete(0, "end")
+                self.manual_thumb_entry.insert(0, file_path)
+            except Exception:
+                pass
+            print(f"   > 🖼️ Thumbnail picture selected: {file_path}")
+
+    def trigger_render_manual_now(self):
+        """Validates manual script + thumbnail and immediately launches video generation."""
+        # Read from entry fields in case user typed or pasted directly
+        try:
+            entry_script = self.manual_script_entry.get().strip()
+            if entry_script:
+                self.manual_script_path = entry_script
+            entry_thumb = self.manual_thumb_entry.get().strip()
+            if entry_thumb:
+                self.manual_thumbnail_path = entry_thumb
+        except Exception:
+            pass
+
+        script_path = getattr(self, "manual_script_path", "").strip()
+        if not script_path or not os.path.exists(script_path):
+            messagebox.showwarning("Missing Script", "Please browse and select a valid .txt script file first!")
+            return
+
+        try:
+            with open(script_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read().strip()
+            if not content:
+                messagebox.showwarning(
+                    "Empty Script File",
+                    f"The script file '{os.path.basename(script_path)}' contains no text (0 bytes)!\n\n"
+                    "Please open the file on your Desktop, write or paste your script into it, save it (Ctrl+S), and click Render again."
+                )
+                return
+        except Exception as e:
+            messagebox.showerror("Read Error", f"Could not read script file: {e}")
+            return
+
+        prof_name = self.active_profile
+        settings = self.master_settings.get(prof_name, {})
+        print(f"\n========================================")
+        print(f"🎬 MANUAL TRIGGER: Starting Long-Form Generation for [{prof_name}]...")
+        print(f"   > 📄 Script: {os.path.basename(script_path)}")
+        thumb_path = getattr(self, "manual_thumbnail_path", "").strip()
+        if thumb_path and os.path.exists(thumb_path):
+            print(f"   > 🖼️ Thumbnail: {os.path.basename(thumb_path)}")
+        else:
+            print("   > 🖼️ Thumbnail: Auto-resolving from assets / background video...")
+        print(f"========================================")
+
+        import threading
+        threading.Thread(
+            target=lambda: self.process_long_form_queue(prof_name, settings, force=True),
+            daemon=True
+        ).start()
 
     def refresh_manual_script_ui(self):
-        """Enables or disables the Browse button based on the lf_manual_script_enabled setting."""
+        """Refreshes manual script & thumbnail UI elements."""
         try:
-            is_enabled = self.get_active_setting("lf_manual_script_enabled", False)
-            state = "normal" if is_enabled else "disabled"
-            fg = "#F39C12" if is_enabled else "#3A3E41"
-            self.manual_script_browse_btn.configure(state=state, fg_color=fg)
+            is_enabled = self.get_active_setting("lf_manual_script_enabled", True)
+            state = "normal"
+            self.manual_script_browse_btn.configure(state=state)
             self.manual_script_entry.configure(state=state)
+            if hasattr(self, "manual_thumb_browse_btn"):
+                self.manual_thumb_browse_btn.configure(state=state)
+            if hasattr(self, "manual_thumb_entry"):
+                self.manual_thumb_entry.configure(state=state)
+            if hasattr(self, "render_manual_btn"):
+                self.render_manual_btn.configure(state=state)
         except Exception:
             pass
 
@@ -576,12 +726,20 @@ class IslamicReelsStudio(ctk.CTk):
             disp = gpu.upper()
         self.active_display.configure(text=f"Currently Managing: {self.active_profile} | GPU: {disp} ⚡")
         
-        # Keep manual script settings in sync when active profile changes
+        # Keep manual script and thumbnail settings in sync when active profile changes
         self.manual_script_path = self.get_active_setting("lf_manual_script_path", "")
         try:
             self.manual_script_entry.delete(0, "end")
             if self.manual_script_path:
                 self.manual_script_entry.insert(0, self.manual_script_path)
+        except Exception:
+            pass
+        self.manual_thumbnail_path = self.get_active_setting("lf_manual_thumbnail_path", "")
+        try:
+            if hasattr(self, "manual_thumb_entry"):
+                self.manual_thumb_entry.delete(0, "end")
+                if self.manual_thumbnail_path:
+                    self.manual_thumb_entry.insert(0, self.manual_thumbnail_path)
         except Exception:
             pass
         self.refresh_manual_script_ui()
@@ -968,7 +1126,8 @@ class IslamicReelsStudio(ctk.CTk):
 
         def play_test_voice():
             voice_actor = lf_voice_actor_var.get()
-            print(f"[SYSTEM] Playing voice test for: {voice_actor}")
+            profile_lang = self.get_active_setting("lf_main_language", "Russian")
+            print(f"[SYSTEM] ▶ Playing voice test for: '{voice_actor}' (Language: {profile_lang})")
             
             def play_thread():
                 try:
@@ -976,10 +1135,17 @@ class IslamicReelsStudio(ctk.CTk):
                     from audio_generator import VOICE_ACTORS
                     speaker = VOICE_ACTORS.get(voice_actor, "xenia")
                     
-                    test_text = "Здравствуйте! Это проверка голоса студии АМБ."
-                    test_path = os.path.join(LF_TEMP, "voice_test.wav")
+                    is_ru = profile_lang.lower() in ["russian", "ru"]
+                    test_lang = "ru" if is_ru else "en"
+                    test_text = "Здравствуйте! Это проверка голоса студии АМБ." if is_ru else "Hello! This is a voice test for AMB Studio."
                     
-                    sync_generate_silero(test_text, speaker=speaker, output_path=test_path, sample_rate=48000)
+                    test_dir = os.path.join(LF_TEMP, "test_voices")
+                    os.makedirs(test_dir, exist_ok=True)
+                    test_path = os.path.join(test_dir, f"test_{speaker}_{test_lang}.wav")
+                    
+                    # Zero-delay playback: If already synthesized, play immediately!
+                    if not os.path.exists(test_path) or os.path.getsize(test_path) == 0:
+                        sync_generate_silero(test_text, speaker=speaker, output_path=test_path, sample_rate=48000, language=test_lang)
                     
                     import winsound
                     winsound.PlaySound(test_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
@@ -1187,58 +1353,108 @@ class IslamicReelsStudio(ctk.CTk):
         if not force and not settings.get("lf_enabled", True):
             return
 
+        manual_path = getattr(self, "manual_script_path", "").strip()
+        if not manual_path:
+            manual_path = settings.get("lf_manual_script_path", "").strip()
+
+        manual_thumb = getattr(self, "manual_thumbnail_path", "").strip()
+        if not manual_thumb:
+            manual_thumb = settings.get("lf_manual_thumbnail_path", "").strip()
+
         queue_file = os.path.join(install_dir, "lf_queues", f"queue_{prof_name.replace(' ', '_')}.json")
-        if not os.path.exists(queue_file):
-            if force:
-                print(f"\n   > ⚠️ [Manual Long-Form] Queue file not found at:\n     {queue_file}")
-                self.after(0, lambda: messagebox.showwarning("Queue Empty", f"No queue file found for profile '{prof_name}'. Please add items via Discord first."))
-            return
-            
-        with open(queue_file, "r") as f:
+        queue_data = []
+        if os.path.exists(queue_file):
             try: 
-                queue_data = json.load(f)
-            except Exception as e: 
-                if force:
-                    print(f"\n   > ❌ [Manual Long-Form] Failed to load queue file: {e}")
-                    self.after(0, lambda: messagebox.showerror("Error", f"Failed to load queue file:\n{e}"))
-                return
-            
-        if not queue_data:
-            if force:
-                print(f"\n   > ⚠️ [Manual Long-Form] Queue is empty for profile '{prof_name}'.")
+                with open(queue_file, "r") as f:
+                    queue_data = json.load(f)
+            except Exception:
+                queue_data = []
+
+        is_manual_job = False
+        should_run_manual = False
+        if force:
+            # Explicit user trigger (e.g. clicked "RENDER MANUAL VIDEO NOW")
+            if manual_path and os.path.exists(manual_path):
+                should_run_manual = True
+            elif not queue_data:
+                print(f"\n   > ⚠️ [Manual Long-Form] Queue is empty for profile '{prof_name}' and no manual script is selected.")
                 self.after(0, lambda: messagebox.showwarning("Queue Empty", f"The queue for '{prof_name}' is currently empty."))
-            return
+                return
+        else:
+            # Automated scan from run_pipeline
+            # NEVER allow manual scripts to hijack pending Discord queue items!
+            if not queue_data and settings.get("lf_manual_script_enabled", False) and manual_path and os.path.exists(manual_path) and prof_name == self.active_profile:
+                should_run_manual = True
+            elif not queue_data:
+                return
+
+        if should_run_manual:
+            script_basename = os.path.splitext(os.path.basename(manual_path))[0]
+            script_title = script_basename.replace("_", " ").replace("-", " ")
+            
+            # Resolve thumbnail: 1. User selected thumbnail 2. candidate images in lf_assets/bg/root 3. cover.jpg
+            chosen_img = ""
+            if manual_thumb and os.path.exists(manual_thumb):
+                chosen_img = manual_thumb
+            else:
+                candidate_images = []
+                for search_d in ["lf_assets", "bg", ""]:
+                    dp = os.path.join(install_dir, search_d) if search_d else install_dir
+                    if os.path.exists(dp):
+                        candidate_images.extend([
+                            os.path.join(dp, f) for f in os.listdir(dp)
+                            if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
+                        ])
+                chosen_img = candidate_images[0] if candidate_images else os.path.join(install_dir, "cover.jpg")
+            
+            queue_data = [{
+                "title": script_title,
+                "image_path": chosen_img,
+                "prompt": script_title,
+                "is_manual_job": True
+            }]
+            is_manual_job = True
+            print(f"   > 📄 [Manual Script Engine] Processing script: '{os.path.basename(manual_path)}' with thumbnail '{os.path.basename(chosen_img)}' for [{prof_name}]...")
+        else:
+            is_manual_job = False
 
         # Check duplication ledger first
         item = queue_data[0]
-        title = item["title"]
-        image_path = item["image_path"]
-        
-        history_file = "lf_published_history.txt"
-        if os.path.exists(history_file):
+        title = item.get("title", "").strip()
+        image_path = item.get("image_path", "").strip()
+        if item.get("is_manual_job"):
+            is_manual_job = True
+
+        history_file = os.path.join(install_dir, "lf_published_history.txt")
+        if not is_manual_job and not force and os.path.exists(history_file):
             try:
                 with open(history_file, "r", encoding="utf-8") as f:
-                    history = [line.strip() for line in f.readlines() if line.strip()]
-                if title in history:
-                    print("   > ⚠️ Duplicate Title Detected: Skipping to prevent duplicate upload.")
-                    queue_data.pop(0)
-                    with open(queue_file, "w") as f:
-                        json.dump(queue_data, f, indent=4)
-                    return
+                    history = [line.strip().lower() for line in f.readlines() if line.strip()]
+                if title.lower() in history:
+                    clean_safe = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-')).rstrip().replace(' ', '_')
+                    existing_vid = os.path.join(install_dir, "lf_output", f"Final_LF_{clean_safe}.mp4")
+                    if os.path.exists(existing_vid):
+                        print(f"   > ⚠️ Duplicate Title Detected: '{title}' is in published history & video exists. Skipping.")
+                        queue_data.pop(0)
+                        with open(queue_file, "w") as f:
+                            json.dump(queue_data, f, indent=4)
+                        return
+                    else:
+                        print(f"   > ℹ️ Title '{title}' was in published history, but no rendered video found in lf_output. Re-rendering...")
             except Exception as e:
                 print(f"   > ⚠️ Warning: Failed to read published history ledger: {e}")
 
         interval_hrs = settings.get("lf_upload_interval", 1)
-        lf_log_file = f"lf_last_post_{prof_name}.txt"
+        lf_log_file = os.path.join(install_dir, f"lf_last_post_{prof_name}.txt")
         
-        if not force and os.path.exists(lf_log_file):
+        if not force and not is_manual_job and os.path.exists(lf_log_file):
             with open(lf_log_file, "r") as f:
                 try: 
                     last_time = datetime.fromisoformat(f.read().strip())
                     delta_hrs = (datetime.now() - last_time).total_seconds() / 3600
                     if delta_hrs < interval_hrs:
                         remaining_mins = int((interval_hrs - delta_hrs) * 60)
-                        print(f"   > ⏳ [{prof_name}] Interval timer active. Next run in: {remaining_mins} minute(s).")
+                        print(f"   > ⏳ [{prof_name}] Interval timer active. Next scheduled run in: {remaining_mins} minute(s).")
                         return # Not enough time has passed yet
                 except: pass
 
@@ -1261,26 +1477,35 @@ class IslamicReelsStudio(ctk.CTk):
             import long_form_composer
             import asyncio
             
-            # Smart Resume naming derived from sanitized video title
-            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '_')).rstrip().replace(' ', '_')
-            script_file = os.path.join("lf_scripts", f"{safe_title}.txt")
-            audio_out = os.path.join("lf_temp", f"voice_{safe_title}.mp3")
-            srt_out = os.path.join("lf_temp", f"subs_{safe_title}.srt")
-            vid_out = os.path.join("lf_output", f"Final_LF_{safe_title}.mp4")
+            # Smart Resume naming derived from sanitized video title (preserves unicode / Cyrillic)
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-')).rstrip().replace(' ', '_')
+            if not safe_title:
+                safe_title = f"video_{int(time.time())}"
+            script_file = os.path.join(install_dir, "lf_scripts", f"{safe_title}.txt")
+            audio_out = os.path.join(install_dir, "lf_temp", f"voice_{safe_title}.mp3")
+            srt_out = os.path.join(install_dir, "lf_temp", f"subs_{safe_title}.srt")
+            vid_out = os.path.join(install_dir, "lf_output", f"Final_LF_{safe_title}.mp4")
             
             # 1. Script Generation Checkpoint
             print("[+] Beginning Script Generation")
 
             target_min = int(settings.get("lf_target_minutes", 2))
 
+            groq_keys = settings.get("groq_api_keys", [])
+            if not groq_keys:
+                for p_name, p_data in self.master_settings.items():
+                    alt = p_data.get("groq_api_keys", [])
+                    if alt:
+                        groq_keys = alt
+                        break
+
             from script_generator import LongFormScripter
             scripter = LongFormScripter(
-                settings.get("groq_api_keys", []),
+                groq_keys,
                 target_minutes=target_min
             )
 
-            # --- MANUAL SCRIPT MODE OVERRIDE ---
-            manual_mode = settings.get("lf_manual_script_enabled", False)
+            manual_mode = settings.get("lf_manual_script_enabled", False) or is_manual_job
             manual_path = getattr(self, "manual_script_path", "").strip()
 
             # --- DURATION-AWARE CACHE CHECK ---
@@ -1301,12 +1526,50 @@ class IslamicReelsStudio(ctk.CTk):
                 except Exception:
                     pass
 
+            if is_manual_job:
+                # Always ensure fresh audio and subtitles for manual script renders
+                for old_f in [audio_out, srt_out]:
+                    if os.path.exists(old_f):
+                        try: os.remove(old_f)
+                        except Exception: pass
+
             if manual_mode:
                 if manual_path and os.path.exists(manual_path):
-                    import shutil
+                    try:
+                        with open(manual_path, "r", encoding="utf-8", errors="ignore") as mf:
+                            m_content = mf.read().strip()
+                    except Exception:
+                        m_content = ""
+                    if not m_content:
+                        print(f"   > ❌ Manual Script Error: '{manual_path}' is empty (0 words/bytes).")
+                        print("   > 📌 Please open the file on your Desktop and add script text before rendering.")
+                        self.after(0, lambda: messagebox.showwarning("Empty Script", "The manual script file is empty! Please write or paste your script before rendering."))
+                        return
+
+                    target_lang = settings.get("lf_main_language", "Russian")
+                    has_cyrillic = bool(re.search(r'[\u0400-\u04FF]', m_content))
+                    has_latin = bool(re.search(r'[a-zA-Z]', m_content))
+
+                    # If user chose Russian profile but script is English, auto-translate via Groq!
+                    if target_lang.lower() in ["russian", "ru"] and not has_cyrillic and has_latin:
+                        print(f"   > 🌐 Language Alignment: Script is in English, but Profile Language is set to Russian.")
+                        print(f"   > 🤖 Translating narrative to Russian via Groq AI so voiceover speaks authentic Russian...")
+                        translated_text = scripter.translate_script_to_language(m_content, target_language="Russian")
+                        if translated_text and re.search(r'[\u0400-\u04FF]', translated_text):
+                            m_content = translated_text
+                            print(f"   > ✅ Script successfully translated to Russian ({len(m_content.split())} words)!")
+                    elif target_lang.lower() in ["english", "en"] and has_cyrillic and not has_latin:
+                        print(f"   > 🌐 Language Alignment: Script is in Russian, but Profile Language is set to English.")
+                        print(f"   > 🤖 Translating narrative to English via Groq AI...")
+                        translated_text = scripter.translate_script_to_language(m_content, target_language="English")
+                        if translated_text:
+                            m_content = translated_text
+                            print(f"   > ✅ Script successfully translated to English ({len(m_content.split())} words)!")
+
                     os.makedirs(os.path.dirname(script_file) if os.path.dirname(script_file) else "lf_scripts", exist_ok=True)
-                    shutil.copy2(manual_path, script_file)
-                    print(f"   > 📄 Manual Script Mode ACTIVE: Using '{manual_path}'")
+                    with open(script_file, "w", encoding="utf-8") as sf:
+                        sf.write(m_content)
+                    print(f"   > 📄 Manual Script Mode ACTIVE: Saved to '{script_file}'")
                     print("   > ⚡ Groq script generation SKIPPED.")
                     print("[+] Script Ready")
                 else:
@@ -1353,7 +1616,7 @@ class IslamicReelsStudio(ctk.CTk):
 
             # 2. Audio Generation Checkpoint
             print("[+] Beginning Chunked Audio Generation")
-            if os.path.exists(audio_out):
+            if os.path.exists(audio_out) and os.path.getsize(audio_out) > 0:
                 print(f"   > 📂 Smart Resume: Found existing audio file: {audio_out}. Bypassing generation.")
                 print("[+] Chunked Audio Generation Complete")
             else:
@@ -1365,8 +1628,12 @@ class IslamicReelsStudio(ctk.CTk):
                     voice_actor=voice_actor,
                     progress_callback=self.update_task_progress
                 ))
-                if os.path.exists(audio_out):
+                if os.path.exists(audio_out) and os.path.getsize(audio_out) > 0:
                     print("[+] Chunked Audio Generation Complete")
+                else:
+                    print(f"   > ❌ Audio Generation Failed: Audio file '{audio_out}' was not created.")
+                    print("   > 📌 Aborting video rendering to prevent FFmpeg crash.")
+                    return
 
             # 3. Subtitle Generation Checkpoint
             hw_mode = settings.get("lf_hardware_mode", "Standard")
@@ -1384,7 +1651,7 @@ class IslamicReelsStudio(ctk.CTk):
                         hardware_mode=hw_mode,
                         device=hw_profile,
                         language=settings.get("lf_main_language", "English"),
-                        groq_api_keys=settings.get("groq_api_keys", [])
+                        groq_api_keys=groq_keys
                     )
                     self.update_task_progress(100, "Subtitles Ready")
             else:
@@ -1392,7 +1659,24 @@ class IslamicReelsStudio(ctk.CTk):
                 srt_out = None
             
             # Resolve background video and music dynamically
-            bg_video = long_form_composer.get_next_background_video()
+            use_custom_image_bg = False
+            if is_manual_job and manual_thumb and os.path.exists(manual_thumb):
+                bg_video = None
+                image_path = manual_thumb
+                use_custom_image_bg = True
+                print(f"   > 🖼️ Custom Picture ACTIVE: Using selected image as video background: '{os.path.basename(manual_thumb)}'")
+            elif not is_manual_job and image_path and os.path.exists(image_path):
+                # Discord queue job with attached picture: Use the attached picture as the video background!
+                bg_video = None
+                use_custom_image_bg = True
+                print(f"   > 🖼️ Discord Picture ACTIVE: Using attached image as video background: '{os.path.basename(image_path)}'")
+            else:
+                bg_video = long_form_composer.get_next_background_video()
+                if bg_video:
+                    print(f"   > 🎥 Background Video ACTIVE: Using '{os.path.basename(bg_video)}' from 'bg' folder.")
+                else:
+                    print(f"   > 🖼️ Still Image ACTIVE: Using '{os.path.basename(image_path)}' as video background.")
+
             bg_music = settings.get("lf_bg_music", "")
             if not bg_music or not os.path.exists(bg_music):
                 bg_music = long_form_composer.get_next_background_music()
@@ -1419,7 +1703,8 @@ class IslamicReelsStudio(ctk.CTk):
                 device=hw_profile,
                 bg_music_enabled=bg_music_enabled,
                 progress_callback=self.update_task_progress,
-                bg_video_path=bg_video
+                bg_video_path=bg_video,
+                use_image_bg=use_custom_image_bg
             )
             
             if success:
@@ -1450,35 +1735,81 @@ class IslamicReelsStudio(ctk.CTk):
                 except Exception as sync_e:
                     print(f"   > ⚠️ Failed to sync Long-Form timestamp to cloud: {sync_e}")
                 
-                # Append title to published history on success
-                try:
-                    with open(history_file, "a", encoding="utf-8") as f:
-                        f.write(title + "\n")
-                    print("   > 📝 Appended title to published history ledger.")
-                except Exception as e:
-                    print(f"   > ⚠️ Warning: Failed to write to published history ledger: {e}")
+                # Append title to published history on success (for automated YouTube posts only)
+                if not is_manual_job:
+                    try:
+                        with open(history_file, "a", encoding="utf-8") as f:
+                            f.write(title + "\n")
+                        print("   > 📝 Appended title to published history ledger.")
+                    except Exception as e:
+                        print(f"   > ⚠️ Warning: Failed to write to published history ledger: {e}")
 
-                # Remove the completed item from the queue
-                queue_data.pop(0)
-                with open(queue_file, "w") as f:
-                    json.dump(queue_data, f, indent=4)
+                if not is_manual_job:
+                    # Remove the completed item from the queue
+                    queue_data.pop(0)
+                    with open(queue_file, "w") as f:
+                        json.dump(queue_data, f, indent=4)
+                else:
+                    # Clear manual script & thumbnail so it doesn't re-run in loop
+                    self.manual_script_path = ""
+                    self.set_active_setting("lf_manual_script_path", "")
+                    self.manual_thumbnail_path = ""
+                    self.set_active_setting("lf_manual_thumbnail_path", "")
+                    self.save_settings()
+                    def _clear_ui():
+                        try:
+                            self.manual_script_entry.delete(0, "end")
+                            if hasattr(self, "manual_thumb_entry"):
+                                self.manual_thumb_entry.delete(0, "end")
+                        except Exception:
+                            pass
+                    self.after(0, _clear_ui)
+                    print(f"   > 📄 Manual script job completed successfully.")
                     
-                # Reset the local timer
-                with open(lf_log_file, "w") as f:
-                    f.write(datetime.now().isoformat())
+                if not is_manual_job:
+                    # Reset the local timer only for automated queue jobs
+                    with open(lf_log_file, "w") as f:
+                        f.write(datetime.now().isoformat())
                     
-                # Terminal Wipe & cycle printout
-                os.system('cls' if os.name == 'nt' else 'clear')
                 print("========================================")
                 print(f"✅ CYCLE COMPLETE: [{prof_name}] - {title}")
                 print("========================================")
 
-                # Part 3: 10-Minute Delayed Cleanup
-                import threading
-                final_video_out = vid_out
-                files_to_wipe = [script_file, audio_out, srt_out, final_video_out]
-                threading.Thread(target=self.delayed_asset_cleanup, args=(files_to_wipe,), daemon=True).start()
-                print("   > 🧹 Cleanup scheduled in 10 minutes. Moving to next task...")
+                if is_manual_job:
+                    manual_record = {
+                        "timestamp": datetime.now().isoformat(),
+                        "profile": prof_name,
+                        "title": title,
+                        "script_path": manual_path,
+                        "thumbnail_path": chosen_img,
+                        "audio_out": audio_out,
+                        "subtitles_out": srt_out,
+                        "video_out": vid_out,
+                        "language": settings.get("lf_main_language", "Russian"),
+                        "voice_actor": settings.get("lf_voice_actor", "Xenia (Default Female)"),
+                        "status": "SUCCESS"
+                    }
+                    try:
+                        rec_file = os.path.join(install_dir, "lf_manual_renders.json")
+                        history_records = []
+                        if os.path.exists(rec_file):
+                            with open(rec_file, "r", encoding="utf-8") as rf:
+                                history_records = json.load(rf)
+                        history_records.append(manual_record)
+                        with open(rec_file, "w", encoding="utf-8") as rf:
+                            json.dump(history_records, rf, indent=4)
+                        with open(os.path.join(install_dir, "lf_manual_renders.log"), "a", encoding="utf-8") as ml:
+                            ml.write(f"[{manual_record['timestamp']}] SUCCESS | Script: {os.path.basename(manual_path)} | Thumbnail: {os.path.basename(chosen_img)} | Video: {vid_out}\n")
+                        print("   > 📝 Manual Render recorded to lf_manual_renders.json and lf_manual_renders.log.")
+                    except Exception as he:
+                        print(f"   > ⚠️ Warning recording manual render: {he}")
+                    print("   > 💾 Manual Script Job: Preserved all script, audio, subtitle, and video files permanently.")
+                else:
+                    # Part 3: Delayed Cleanup for automated jobs only (never delete final video!)
+                    import threading
+                    files_to_wipe = [script_file, audio_out, srt_out]
+                    threading.Thread(target=self.delayed_asset_cleanup, args=(files_to_wipe,), daemon=True).start()
+                    print("   > 🧹 Automated Queue: Temp audio/subtitle cleanup scheduled in 10 minutes.")
         except Exception as e:
             import traceback
             print(f"   > ❌ Long-Form Pipeline Error: {e}")
@@ -1562,10 +1893,13 @@ class IslamicReelsStudio(ctk.CTk):
         print(f"   > 🧹 Asset Cleanup: Starting removal of temporary files...")
         for filepath in files_to_delete:
             if filepath:
+                # Safeguard: Never delete rendered mp4 videos or output files
+                if filepath.lower().endswith(".mp4") or "lf_output" in filepath:
+                    continue
                 try:
                     if os.path.exists(filepath):
                         os.remove(filepath)
-                        print(f"   > 🗑️ Deleted: {os.path.basename(filepath)}")
+                        print(f"   > 🗑️ Deleted temp file: {os.path.basename(filepath)}")
                 except Exception as e:
                     pass
         print(f"   > 🧹 Asset Cleanup complete.")
@@ -1574,14 +1908,15 @@ class IslamicReelsStudio(ctk.CTk):
         print("[SYSTEM] Long-Form Automation Engine started. Scanning profile queues...")
         while self.is_running:
             try:
-                for prof_name, settings in self.master_settings.items():
+                profiles_snapshot = list(self.master_settings.items())
+                for prof_name, settings in profiles_snapshot:
                     if not self.is_running: break
                     # Only process profiles that have lf_enabled=True
                     if not settings.get("lf_enabled", True):
                         print(f"   > ⏭️ Skipping [{prof_name}]: lf_enabled is OFF")
                         continue
                     print(f"   > 🔍 Scanning queue for [{prof_name}]...")
-                    self.process_long_form_queue(prof_name, settings)
+                    self.process_long_form_queue(prof_name, dict(settings))
                     
                 # Poll every 30 seconds with 1-second ticks
                 print("   > ⏰ Scan complete. Waiting 30 seconds before next scan...")
@@ -1592,8 +1927,7 @@ class IslamicReelsStudio(ctk.CTk):
             except Exception as e:
                 import traceback
                 print(f"\n❌ CRITICAL GLOBAL ERROR IN PIPELINE LOOP:\n{traceback.format_exc()}")
-                self.is_running = False
-                break
+                time.sleep(5)
         
         def reset_btn():
             self.engine_thread_active = False 

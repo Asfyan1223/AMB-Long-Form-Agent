@@ -429,11 +429,11 @@ def has_audio_stream(file_path):
 
 def get_next_background_video():
     """
-    Scans the 'bg' folder (and fallbacks: 'background_videos', 'background_music')
+    Scans the 'bg' folder (and fallback: 'background_videos')
     for video files (.mp4, .mov, .mkv, .webm, .avi).
     Rotates through them sequentially using 'last_bg_video_index.txt'.
     """
-    search_dirs = ["bg", "background_videos", "background_music"]
+    search_dirs = ["bg", "background_videos"]
     valid_exts = ('.mp4', '.mov', '.mkv', '.webm', '.avi')
     
     candidate_dir = None
@@ -519,9 +519,12 @@ def get_next_background_music():
         
     return selected_file
 
-def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, final_output_path, sub_size="24", sub_color="Yellow", sub_position="Bottom", hardware_mode="Standard", device="cpu", bg_music_enabled=True, progress_callback=None, bg_video_path=None):
-    # Auto-resolve background video from 'bg' folder if not explicitly supplied
-    if not bg_video_path:
+def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, final_output_path, sub_size="24", sub_color="Yellow", sub_position="Bottom", hardware_mode="Standard", device="cpu", bg_music_enabled=True, progress_callback=None, bg_video_path=None, use_image_bg=False):
+    # If explicitly configured to use custom image background, suppress video background
+    if use_image_bg:
+        bg_video_path = None
+    elif not bg_video_path:
+        # Auto-resolve background video from 'bg' folder if not explicitly supplied
         bg_video_path = get_next_background_video()
 
     # Enforce strict local directory routing to purge any legacy AppData path inputs
@@ -529,6 +532,10 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
         srt_path = os.path.join(os.getcwd(), "lf_temp", os.path.basename(srt_path))
     if audio_path and not os.path.exists(audio_path):
         audio_path = os.path.join(os.getcwd(), "lf_temp", os.path.basename(audio_path))
+    if not audio_path or not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
+        print(f"   > ❌ Video Composition Error: Audio file '{audio_path}' does not exist or is 0 bytes.", flush=True)
+        print("   > 📌 Audio generation failed or was skipped because the script was empty.", flush=True)
+        return False
     if image_path and not os.path.exists(image_path):
         image_path = os.path.join(os.getcwd(), "lf_assets", os.path.basename(image_path))
     if final_output_path and not os.path.isabs(final_output_path):
@@ -633,24 +640,18 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
     logical_cores = psutil.cpu_count(logical=True) or 4
     threads = str(logical_cores)
 
-    # Build primary and fallback encoder configurations
-    encoders_to_try = []
+    # Build primary and fallback encoder configurations: NVENC is ALWAYS prioritized for NVIDIA GPUs
     has_nvidia, gpu_name, vram_gb = get_nvidia_gpu_info()
-    use_nvenc = has_nvidia or (device == "cuda") or is_nvenc_functional()
+    gpu_label = gpu_name or "NVIDIA GPU"
+    print(f"   > ⚡ Prioritizing NVIDIA NVENC Hardware Encoding ({gpu_label})", flush=True)
 
-    if use_nvenc:
-        print(f"   > ⚡ NVIDIA NVENC Hardware Engine Engaged ({gpu_name or 'GTX 1660 Super'}, {vram_gb}GB VRAM)", flush=True)
-        # Primary: High-speed NVENC with Turing VBR Constant Quality 23 and spatial AQ
-        encoders_to_try.append((
-            f'NVIDIA NVENC Hardware Engine ({gpu_name or "GTX 1660 Super 6GB"})',
-            ['-c:v', 'h264_nvenc', '-preset', 'fast', '-rc', 'vbr', '-cq', '23', '-b:v', '0', '-spatial-aq', '1']
-        ))
-        # Fallback 1: Universal NVENC compatibility profile
-        encoders_to_try.append((
-            'NVIDIA NVENC Universal Compatibility (h264_nvenc)',
-            ['-c:v', 'h264_nvenc', '-preset', 'fast', '-cq', '23']
-        ))
-    elif device == "amf":
+    is_older_gpu = any(k in gpu_label.lower() for k in ["680", "670", "660", "650", "750", "760", "770", "780", "gtx 6", "gtx 7"])
+    encoders_to_try = []
+    if not is_older_gpu:
+        encoders_to_try.append((f'NVIDIA NVENC Hardware Engine ({gpu_label})', ['-c:v', 'h264_nvenc', '-preset', 'fast', '-rc', 'vbr', '-cq', '23', '-b:v', '0', '-spatial-aq', '1']))
+    encoders_to_try.append((f'NVIDIA NVENC Universal Compatibility ({gpu_label})', ['-c:v', 'h264_nvenc', '-preset', 'fast', '-cq', '23']))
+    encoders_to_try.append(('NVIDIA NVENC Basic (h264_nvenc)', ['-c:v', 'h264_nvenc']))
+    if device == "amf":
         encoders_to_try.append(('AMD AMF (h264_amf)', ['-c:v', 'h264_amf']))
 
     if has_bg_video:
@@ -686,13 +687,15 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
             errors='replace'
         )
 
-        stderr_lines = collections.deque(maxlen=30)
+        stderr_lines = collections.deque(maxlen=40)
         def _read_stderr():
             try:
                 for eline in iter(process.stderr.readline, ''):
                     if eline:
-                        stderr_lines.append(eline.strip())
-                process.stderr.close()
+                        sline = eline.strip()
+                        stderr_lines.append(sline)
+                        if any(w in sline.lower() for w in ["fontconfig", "loading fonts", "building font", "nvenc"]):
+                            print(f"     [FFmpeg Engine] {sline}", flush=True)
             except Exception:
                 pass
 
@@ -705,9 +708,9 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
         current_speed = ""
         current_fps = ""
 
-        # Kick off progress bar in GUI at 0%
+        # Kick off progress bar in GUI immediately so it never stays at "Idle"
         if progress_callback:
-            progress_callback(0, "Rendering Video (0%) | Rate: Starting...")
+            progress_callback(0, f"Rendering Video (0%) | {enc_name.split('(')[0].strip()} Starting...")
 
         while True:
             line = process.stdout.readline()
@@ -780,7 +783,7 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
                     except Exception:
                         pass
 
-        process.communicate()
+        process.wait()
         err_thread.join(timeout=2.0)
 
         if process.returncode == 0:

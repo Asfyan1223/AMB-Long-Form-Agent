@@ -12,9 +12,16 @@ InstallerOutput/
 temp/
 temp_cache/
 lf_temp/
+lf_output/
+lf_assets/
+lf_scripts/
+lf_queues/
 output/
 *.mp4
 *.mp3
+*.wav
+*.msi
+lf_last_post_*.txt
 
 # Security & Credentials
 credentials/

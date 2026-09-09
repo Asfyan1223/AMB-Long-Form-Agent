@@ -23,7 +23,7 @@ class LongFormScripter:
             self.api_keys = []
             
         self.current_key_index = 0
-        self.model = "openai/gpt-oss-120b"
+        self.model = "llama-3.3-70b-versatile"
         
         if self.api_keys:
             self.client = Groq(api_key=self.api_keys[self.current_key_index])
@@ -44,7 +44,7 @@ class LongFormScripter:
         from groq import Groq
         self.current_key_index += 1
         if self.current_key_index < len(self.api_keys):
-            print(f"   > 🔄 Rate limit hit. Switching to Backup Groq API Key (Slot {self.current_key_index + 1})...")
+            print(f"   > 🔄 Switching to Backup Groq API Key (Slot {self.current_key_index + 1}/{len(self.api_keys)})...")
             self.client = Groq(api_key=self.api_keys[self.current_key_index])
             return True
         return False
@@ -52,6 +52,10 @@ class LongFormScripter:
     def _call_groq(self, system_prompt, user_prompt, retries=5):
         import re
         import time
+        if not self.client:
+            print("   > ❌ Groq Scripter Error: No valid Groq client initialized (missing or invalid API keys).")
+            return None
+
         for attempt in range(retries):
             try:
                 completion = self.client.chat.completions.create(
@@ -139,8 +143,25 @@ class LongFormScripter:
                             from groq import Groq
                             self.client = Groq(api_key=self.api_keys[self.current_key_index])
                         continue
+                elif any(k in error_str.lower() for k in ["401", "invalid_api_key", "invalid api key", "unauthorized", "authentication"]):
+                    print(f"   > ⚠️ Groq API Key (Slot {self.current_key_index + 1}/{len(self.api_keys)}) is INVALID or EXPIRED (401).")
+                    if self.switch_key():
+                        continue
+                    else:
+                        print("   > ❌ All Groq API Keys are invalid (401). Please update your keys in Settings -> YouTube API OAuth.")
+                        return None
+                elif "model_not_found" in error_str or "decommissioned" in error_str or "not supported" in error_str:
+                    print(f"   > ⚠️ Model '{self.model}' unavailable on Groq. Falling back to alternative model...")
+                    if self.model != "llama-3.3-70b-versatile":
+                        self.model = "llama-3.3-70b-versatile"
+                    elif self.model != "llama-3.1-8b-instant":
+                        self.model = "llama-3.1-8b-instant"
+                    print(f"   > 🔄 Switched model to '{self.model}'")
+                    continue
                 else:
-                    print(f"   > ❌ Groq API Error: {e}")
+                    print(f"   > ⚠️ Groq API Error on Slot {self.current_key_index + 1}: {e}")
+                    if self.switch_key():
+                        continue
                     return None
                     
         print("   > 🛑 FATAL: Max retries exceeded.")
@@ -485,6 +506,28 @@ class LongFormScripter:
             except Exception:
                 pass
             return None
+
+    def translate_script_to_language(self, text: str, target_language: str = "Russian") -> str:
+        """
+        Translates a narrative script into the target language (e.g. Russian) preserving
+        the emotional tone, cadence, and line-by-line pacing for speech narration.
+        """
+        if not self.client or not text:
+            return text
+            
+        system_prompt = (
+            f"You are a professional voiceover translator and literary narrator. "
+            f"Translate the following narration script into natural, expressive, emotionally engaging {target_language}. "
+            f"Preserve paragraph structure, dramatic timing, and speaking rhythm. "
+            f"Output ONLY the translated {target_language} script. Do NOT include any intro, outro, translator notes, or quotes."
+        )
+        user_prompt = f"Translate this narrative into spoken {target_language}:\n\n{text}"
+        
+        print(f"   > 🌐 Translating script to {target_language} via Groq AI...")
+        translated = self._call_groq(system_prompt, user_prompt, retries=3)
+        if translated and len(translated.strip()) > 30:
+            return translated.strip()
+        return text
 
 
 # --- STANDALONE TESTER ---
