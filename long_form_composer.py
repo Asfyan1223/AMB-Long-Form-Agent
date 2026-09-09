@@ -574,11 +574,17 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
             '-i', audio_path
         ]
         video_filter = "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=24"
+        safe_srt_temp = None
         if srt_path and os.path.exists(srt_path):
-            clean_srt = os.path.abspath(srt_path).replace("\\", "/")
-            clean_srt = clean_srt.replace(":", "\\:")
-            clean_srt = clean_srt.replace("'", "'\\''")
-            video_filter += f",subtitles=filename='{clean_srt}':force_style='Alignment=2,FontSize={sub_size},PrimaryColour={ssa_color},Outline=2,Shadow=1,MarginV=20,WrapStyle=2'"
+            try:
+                import shutil
+                safe_srt_temp = os.path.join(TEMP_DIR, "render_subs_temp.srt")
+                shutil.copyfile(srt_path, safe_srt_temp)
+                clean_srt = os.path.abspath(safe_srt_temp).replace("\\", "/")
+                clean_srt = clean_srt.replace(":", "\\:")
+                video_filter += f",subtitles=filename='{clean_srt}':force_style='Alignment=2,FontSize={sub_size},PrimaryColour={ssa_color},Outline=2,Shadow=1,MarginV=20,WrapStyle=2'"
+            except Exception as se:
+                print(f"   > ⚠️ Warning preparing subtitle filter: {se}", flush=True)
         video_filter += "[vout]"
 
         # Audio handling for moving background video
@@ -615,11 +621,17 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
             '-i', audio_path
         ]
         video_filter = "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
+        safe_srt_temp = None
         if srt_path and os.path.exists(srt_path):
-            clean_srt = os.path.abspath(srt_path).replace("\\", "/")
-            clean_srt = clean_srt.replace(":", "\\:")
-            clean_srt = clean_srt.replace("'", "'\\''")
-            video_filter += f",subtitles=filename='{clean_srt}':force_style='Alignment=2,FontSize={sub_size},PrimaryColour={ssa_color},Outline=2,Shadow=1,MarginV=20,WrapStyle=2'"
+            try:
+                import shutil
+                safe_srt_temp = os.path.join(TEMP_DIR, "render_subs_temp.srt")
+                shutil.copyfile(srt_path, safe_srt_temp)
+                clean_srt = os.path.abspath(safe_srt_temp).replace("\\", "/")
+                clean_srt = clean_srt.replace(":", "\\:")
+                video_filter += f",subtitles=filename='{clean_srt}':force_style='Alignment=2,FontSize={sub_size},PrimaryColour={ssa_color},Outline=2,Shadow=1,MarginV=20,WrapStyle=2'"
+            except Exception as se:
+                print(f"   > ⚠️ Warning preparing subtitle filter: {se}", flush=True)
         video_filter += "[vout]"
 
         if bg_music_enabled and bg_music_path and os.path.exists(bg_music_path):
@@ -640,20 +652,36 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
     logical_cores = psutil.cpu_count(logical=True) or 4
     threads = str(logical_cores)
 
-    # Build primary and fallback encoder configurations: NVENC is ALWAYS prioritized for NVIDIA GPUs
+    # Build primary and fallback encoder configurations:
     has_nvidia, gpu_name, vram_gb = get_nvidia_gpu_info()
     gpu_label = gpu_name or "NVIDIA GPU"
-    print(f"   > ⚡ Prioritizing NVIDIA NVENC Hardware Encoding ({gpu_label})", flush=True)
 
-    is_older_gpu = any(k in gpu_label.lower() for k in ["680", "670", "660", "650", "750", "760", "770", "780", "gtx 6", "gtx 7"])
+    # Pre-test NVENC so we NEVER hang or crash trying an unsupported hardware encoder
+    nvenc_ok = False
+    if device != "cpu" and (has_nvidia or device == "cuda"):
+        try:
+            nvenc_ok = is_nvenc_functional()
+        except Exception:
+            nvenc_ok = False
+
+        if not nvenc_ok:
+            print(f"   > ℹ️ GPU Detected: {gpu_label}, but NVENC encoding is unavailable on current driver.", flush=True)
+            print(f"   > 🔄 Automatic Fallback: Using multi-threaded CPU rendering (libx264) to prevent crash.", flush=True)
+        else:
+            print(f"   > ⚡ Prioritizing NVIDIA NVENC Hardware Encoding ({gpu_label})", flush=True)
+
     encoders_to_try = []
-    if not is_older_gpu:
-        encoders_to_try.append((f'NVIDIA NVENC Hardware Engine ({gpu_label})', ['-c:v', 'h264_nvenc', '-preset', 'fast', '-rc', 'vbr', '-cq', '23', '-b:v', '0', '-spatial-aq', '1']))
-    encoders_to_try.append((f'NVIDIA NVENC Universal Compatibility ({gpu_label})', ['-c:v', 'h264_nvenc', '-preset', 'fast', '-cq', '23']))
-    encoders_to_try.append(('NVIDIA NVENC Basic (h264_nvenc)', ['-c:v', 'h264_nvenc']))
+    if nvenc_ok:
+        is_older_gpu = any(k in gpu_label.lower() for k in ["680", "670", "660", "650", "750", "760", "770", "780", "gtx 6", "gtx 7"])
+        if not is_older_gpu:
+            encoders_to_try.append((f'NVIDIA NVENC Hardware Engine ({gpu_label})', ['-c:v', 'h264_nvenc', '-preset', 'fast', '-rc', 'vbr', '-cq', '23', '-b:v', '0', '-spatial-aq', '1']))
+        encoders_to_try.append((f'NVIDIA NVENC Universal Compatibility ({gpu_label})', ['-c:v', 'h264_nvenc', '-preset', 'fast', '-cq', '23']))
+        encoders_to_try.append(('NVIDIA NVENC Basic (h264_nvenc)', ['-c:v', 'h264_nvenc']))
+
     if device == "amf":
         encoders_to_try.append(('AMD AMF (h264_amf)', ['-c:v', 'h264_amf']))
 
+    # CPU Encoders - ALWAYS included as reliable primary or fallback
     if has_bg_video:
         encoders_to_try.append(('High-Speed Video Engine (libx264 CPU fallback)', ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23']))
     else:
@@ -794,11 +822,18 @@ def render_long_form_video(image_path, audio_path, srt_path, bg_music_path, fina
             return True
         else:
             print(f"   > ⚠️ Encoder {enc_name} failed (exit code {process.returncode}).", flush=True)
+            if "nvenc" in enc_name.lower():
+                global _nvenc_tested
+                _nvenc_tested = False
             if stderr_lines:
                 print("   > 📋 Diagnostics (last FFmpeg output):", flush=True)
-                for el in list(stderr_lines)[-10:]:
+                for el in list(stderr_lines)[-5:]:
                     print(f"     | {el}", flush=True)
-            print("   > 🔄 Attempting fallback encoder...", flush=True)
+            print("   > 🔄 Automatically falling back to next encoder (CPU libx264)...", flush=True)
+
+    if safe_srt_temp and os.path.exists(safe_srt_temp):
+        try: os.remove(safe_srt_temp)
+        except Exception: pass
 
     print("   > ❌ FFmpeg Render Failed across all encoders.", flush=True)
     return False

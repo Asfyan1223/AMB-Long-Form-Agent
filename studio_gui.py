@@ -544,47 +544,65 @@ class IslamicReelsStudio(ctk.CTk):
                 device = "cuda"
                 self.gpu_display_name = f"{gpu_name} ({vram_gb}GB VRAM - CUDA/NVENC)"
                 print(f"[SYSTEM] 🚀 NVIDIA GPU Detected: {gpu_name} ({vram_gb} GB VRAM) | Hardware Acceleration: CUDA & NVENC ACTIVE")
-                return device
         except Exception:
             pass
 
         # 2. Probe via PyTorch CUDA
-        try:
-            import torch
-            if torch.cuda.is_available():
-                device = "cuda"
-                gpu_name = torch.cuda.get_device_name(0)
-                try:
-                    vram_bytes = torch.cuda.get_device_properties(0).total_memory
-                    vram_gb = round(vram_bytes / (1024 ** 3), 1)
-                except Exception:
-                    vram_gb = 6.0
-                self.gpu_display_name = f"{gpu_name} ({vram_gb}GB VRAM - CUDA/NVENC)"
-                print(f"[SYSTEM] 🚀 NVIDIA CUDA Detected: {gpu_name} ({vram_gb} GB VRAM) - Acceleration ACTIVE")
-                return device
-        except Exception:
-            pass
+        if device == "cpu":
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    device = "cuda"
+                    gpu_name = torch.cuda.get_device_name(0)
+                    try:
+                        vram_bytes = torch.cuda.get_device_properties(0).total_memory
+                        vram_gb = round(vram_bytes / (1024 ** 3), 1)
+                    except Exception:
+                        vram_gb = 6.0
+                    self.gpu_display_name = f"{gpu_name} ({vram_gb}GB VRAM - CUDA/NVENC)"
+                    print(f"[SYSTEM] 🚀 NVIDIA CUDA Detected: {gpu_name} ({vram_gb} GB VRAM) - Acceleration ACTIVE")
+            except Exception:
+                pass
 
         # 3. Probe via Windows CimInstance VideoController
-        try:
-            import subprocess
-            cmd = "powershell -Command \"Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name\""
-            output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
-            for line in output.splitlines():
-                l = line.strip()
-                if any(k in l.lower() for k in ["nvidia", "geforce", "gtx", "rtx"]):
-                    device = "cuda"
-                    vram_str = "6GB" if "1660" in l else "VRAM"
-                    self.gpu_display_name = f"{l} ({vram_str} - CUDA/NVENC)"
-                    print(f"[SYSTEM] 🚀 NVIDIA GPU Controller Detected: {l} | Hardware Acceleration: CUDA & NVENC ACTIVE")
+        if device == "cpu":
+            try:
+                import subprocess
+                cmd = "powershell -Command \"Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name\""
+                output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL)
+                for line in output.splitlines():
+                    l = line.strip()
+                    if any(k in l.lower() for k in ["nvidia", "geforce", "gtx", "rtx"]):
+                        device = "cuda"
+                        vram_str = "6GB" if "1660" in l else "VRAM"
+                        self.gpu_display_name = f"{l} ({vram_str} - CUDA/NVENC)"
+                        print(f"[SYSTEM] 🚀 NVIDIA GPU Controller Detected: {l} | Hardware Acceleration: CUDA & NVENC ACTIVE")
+                        break
+                    elif "amd" in l.lower() or "radeon" in l.lower():
+                        device = "amf"
+                        self.gpu_display_name = f"{l} (AMD AMF)"
+                        print(f"[SYSTEM] 🚀 AMD GPU Detected: {l} (AMF Active)")
+                        break
+            except Exception:
+                pass
+
+        # 4. Final Validation: If NVIDIA GPU was flagged, verify NVENC actually functions on current driver
+        if device == "cuda":
+            try:
+                import long_form_composer
+                if not long_form_composer.is_nvenc_functional():
+                    gpu_short = self.gpu_display_name.split("(")[0].strip()
+                    print(f"[SYSTEM] ℹ️ GPU Detected: {gpu_short} | NVENC driver support unavailable on this system.")
+                    print(f"[SYSTEM] 🔄 Auto Hardware Fallback: Switching Hardware Profile to CPU to prevent pipeline crashes.")
+                    device = "cpu"
+                    self.gpu_display_name = f"{gpu_short} (Auto CPU Fallback)"
                     return device
-                elif "amd" in l.lower() or "radeon" in l.lower():
-                    device = "amf"
-                    self.gpu_display_name = f"{l} (AMD AMF)"
-                    print(f"[SYSTEM] 🚀 AMD GPU Detected: {l} (AMF Active)")
-                    return device
-        except Exception:
-            pass
+            except Exception:
+                pass
+            return device
+
+        if device == "amf":
+            return device
 
         print("[SYSTEM] GPU Probe: No discrete GPU detected. Defaulting to CPU.")
         self.gpu_display_name = "CPU (Software)"
@@ -1529,7 +1547,10 @@ class IslamicReelsStudio(ctk.CTk):
             import asyncio
             
             # Smart Resume naming derived from sanitized video title (preserves unicode / Cyrillic)
+            # Cap at 50 chars to avoid Windows MAX_PATH length crashes in deep directories
             safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-')).rstrip().replace(' ', '_')
+            if len(safe_title) > 50:
+                safe_title = safe_title[:50].rstrip('_')
             if not safe_title:
                 safe_title = f"video_{int(time.time())}"
             script_file = os.path.join(install_dir, "lf_scripts", f"{safe_title}.txt")
