@@ -1,5 +1,18 @@
+import sys
 import os
 import time
+
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 from groq import Groq
 
 # Create a folder to save our long scripts safely
@@ -23,7 +36,8 @@ class LongFormScripter:
             self.api_keys = []
             
         self.current_key_index = 0
-        self.model = "llama-3.3-70b-versatile"
+        self.fallback_models = ["qwen/qwen3.8-27b", "groq/compound-mini", "qwen/qwen3.6-27b", "openai/gpt-oss-120b"]
+        self.model = self.fallback_models[0]
         
         if self.api_keys:
             self.client = Groq(api_key=self.api_keys[self.current_key_index])
@@ -49,9 +63,11 @@ class LongFormScripter:
             return True
         return False
 
-    def _call_groq(self, system_prompt, user_prompt, retries=5):
+    def _call_groq(self, system_prompt, user_prompt, retries=None):
         import re
         import time
+        if retries is None:
+            retries = max(6, len(self.api_keys) * 2)
         if not self.client:
             print("   > ❌ Groq Scripter Error: No valid Groq client initialized (missing or invalid API keys).")
             return None
@@ -150,14 +166,19 @@ class LongFormScripter:
                     else:
                         print("   > ❌ All Groq API Keys are invalid (401). Please update your keys in Settings -> YouTube API OAuth.")
                         return None
-                elif "model_not_found" in error_str or "decommissioned" in error_str or "not supported" in error_str:
-                    print(f"   > ⚠️ Model '{self.model}' unavailable on Groq. Falling back to alternative model...")
-                    if self.model != "llama-3.3-70b-versatile":
-                        self.model = "llama-3.3-70b-versatile"
-                    elif self.model != "llama-3.1-8b-instant":
-                        self.model = "llama-3.1-8b-instant"
-                    print(f"   > 🔄 Switched model to '{self.model}'")
-                    continue
+                elif "model_not_found" in error_str or "decommissioned" in error_str or "not supported" in error_str or "404" in error_str:
+                    curr_idx = self.fallback_models.index(self.model) if self.model in self.fallback_models else -1
+                    next_idx = curr_idx + 1
+                    if next_idx < len(self.fallback_models):
+                        self.model = self.fallback_models[next_idx]
+                        print(f"   > 🔄 Model unavailable. Switched model to '{self.model}'...")
+                        continue
+                    else:
+                        print(f"   > ⚠️ All fallback models exhausted on this key. Switching to next key...")
+                        self.model = self.fallback_models[0]
+                        if self.switch_key():
+                            continue
+                        return None
                 else:
                     print(f"   > ⚠️ Groq API Error on Slot {self.current_key_index + 1}: {e}")
                     if self.switch_key():
@@ -439,7 +460,7 @@ class LongFormScripter:
             f"and 7 dynamic hashtags — all written in {language}."
         )
 
-        response = self._call_groq(system_prompt, user_prompt, retries=2)
+        response = self._call_groq(system_prompt, user_prompt)
         if not response:
             print("   > ⚠️ Warning: Metadata generation skipped. Using title fallback.")
             return None
