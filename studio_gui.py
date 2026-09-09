@@ -503,7 +503,7 @@ class IslamicReelsStudio(ctk.CTk):
 
         import threading
         threading.Thread(
-            target=lambda: self.process_long_form_queue(prof_name, settings, force=True),
+            target=lambda: self.process_long_form_queue(prof_name, settings, force=True, is_manual_script=True),
             daemon=True
         ).start()
 
@@ -1348,10 +1348,10 @@ class IslamicReelsStudio(ctk.CTk):
             self.log_textbox.configure(state="disabled")
             threading.Thread(target=self.run_pipeline, daemon=True).start()
 
-    def process_long_form_queue(self, prof_name, settings, force=False):
+    def process_long_form_queue(self, prof_name, settings, force=False, force_queue=False, is_manual_script=False):
         import os
-        if not force and not settings.get("lf_enabled", True):
-            return
+        if not force and not force_queue and not settings.get("lf_enabled", True):
+            return False
 
         manual_path = getattr(self, "manual_script_path", "").strip()
         if not manual_path:
@@ -1370,23 +1370,66 @@ class IslamicReelsStudio(ctk.CTk):
             except Exception:
                 queue_data = []
 
+        # If user clicked the orange button (force_queue=True) and current profile queue is empty,
+        # scan if any other profile has pending queue items!
+        if force_queue and not queue_data:
+            for alt_prof, alt_settings in self.master_settings.items():
+                if alt_prof == prof_name:
+                    continue
+                alt_qf = os.path.join(install_dir, "lf_queues", f"queue_{alt_prof.replace(' ', '_')}.json")
+                if os.path.exists(alt_qf):
+                    try:
+                        with open(alt_qf, "r") as f:
+                            alt_data = json.load(f)
+                            if alt_data and len(alt_data) > 0:
+                                print(f"   > 🔀 [Force Queue] Active profile [{prof_name}] queue is empty. Switching to [{alt_prof}] queue ({len(alt_data)} pending items).")
+                                prof_name = alt_prof
+                                settings = alt_settings
+                                queue_file = alt_qf
+                                queue_data = alt_data
+                                break
+                    except Exception:
+                        pass
+
         is_manual_job = False
         should_run_manual = False
-        if force:
-            # Explicit user trigger (e.g. clicked "RENDER MANUAL VIDEO NOW")
+
+        if is_manual_script:
+            # Explicit trigger from Purple Button: "RENDER MANUAL VIDEO NOW"
             if manual_path and os.path.exists(manual_path):
                 should_run_manual = True
-            elif not queue_data:
-                print(f"\n   > ⚠️ [Manual Long-Form] Queue is empty for profile '{prof_name}' and no manual script is selected.")
-                self.after(0, lambda: messagebox.showwarning("Queue Empty", f"The queue for '{prof_name}' is currently empty."))
-                return
+            else:
+                print(f"   > ⚠️ [Manual Script Engine] No valid manual script file found at '{manual_path}'.")
+                return False
+        elif force_queue:
+            # Explicit trigger from Orange Button: "MANUAL LONG-FORM GEN (Force Queue)"
+            # STRICT RULE: Must generate whatever is in pending queue!
+            if queue_data:
+                should_run_manual = False
+            elif manual_path and os.path.exists(manual_path):
+                print(f"   > ℹ️ [Force Queue] Queue is empty. Falling back to selected manual script: '{os.path.basename(manual_path)}'...")
+                should_run_manual = True
+            else:
+                print(f"\n   > ⚠️ [Force Queue] Queue is empty for profile '{prof_name}' and no manual script is selected.")
+                return False
+        elif force:
+            # Generic force trigger
+            if queue_data:
+                should_run_manual = False
+            elif manual_path and os.path.exists(manual_path):
+                should_run_manual = True
+            else:
+                print(f"\n   > ⚠️ [Force Gen] Queue is empty for profile '{prof_name}' and no manual script is selected.")
+                return False
         else:
             # Automated scan from run_pipeline
             # NEVER allow manual scripts to hijack pending Discord queue items!
-            if not queue_data and settings.get("lf_manual_script_enabled", False) and manual_path and os.path.exists(manual_path) and prof_name == self.active_profile:
+            if queue_data:
+                should_run_manual = False
+            elif settings.get("lf_manual_script_enabled", False) and manual_path and os.path.exists(manual_path) and prof_name == self.active_profile:
                 should_run_manual = True
-            elif not queue_data:
-                return
+            else:
+                return False
 
         if should_run_manual:
             script_basename = os.path.splitext(os.path.basename(manual_path))[0]
@@ -1418,15 +1461,20 @@ class IslamicReelsStudio(ctk.CTk):
         else:
             is_manual_job = False
 
+        if not queue_data:
+            return False
+
         # Check duplication ledger first
         item = queue_data[0]
         title = item.get("title", "").strip()
+        if not title:
+            title = f"Video_{int(time.time())}"
         image_path = item.get("image_path", "").strip()
         if item.get("is_manual_job"):
             is_manual_job = True
 
         history_file = os.path.join(install_dir, "lf_published_history.txt")
-        if not is_manual_job and not force and os.path.exists(history_file):
+        if not is_manual_job and not force and not force_queue and os.path.exists(history_file):
             try:
                 with open(history_file, "r", encoding="utf-8") as f:
                     history = [line.strip().lower() for line in f.readlines() if line.strip()]
@@ -1438,7 +1486,7 @@ class IslamicReelsStudio(ctk.CTk):
                         queue_data.pop(0)
                         with open(queue_file, "w") as f:
                             json.dump(queue_data, f, indent=4)
-                        return
+                        return True
                     else:
                         print(f"   > ℹ️ Title '{title}' was in published history, but no rendered video found in lf_output. Re-rendering...")
             except Exception as e:
@@ -1447,7 +1495,7 @@ class IslamicReelsStudio(ctk.CTk):
         interval_hrs = settings.get("lf_upload_interval", 1)
         lf_log_file = os.path.join(install_dir, f"lf_last_post_{prof_name}.txt")
         
-        if not force and not is_manual_job and os.path.exists(lf_log_file):
+        if not force and not force_queue and not is_manual_job and os.path.exists(lf_log_file):
             with open(lf_log_file, "r") as f:
                 try: 
                     last_time = datetime.fromisoformat(f.read().strip())
@@ -1455,8 +1503,10 @@ class IslamicReelsStudio(ctk.CTk):
                     if delta_hrs < interval_hrs:
                         remaining_mins = int((interval_hrs - delta_hrs) * 60)
                         print(f"   > ⏳ [{prof_name}] Interval timer active. Next scheduled run in: {remaining_mins} minute(s).")
-                        return # Not enough time has passed yet
+                        return False # Not enough time has passed yet
                 except: pass
+        elif force or force_queue:
+            print(f"   > ⚡ [Force Override] Upload interval timer BYPASSED — starting generation immediately!")
 
         if not os.path.isabs(image_path):
             abs_image_path = os.path.join(install_dir, image_path)
@@ -1464,7 +1514,8 @@ class IslamicReelsStudio(ctk.CTk):
                 image_path = abs_image_path
         
         if self.engine_is_busy:
-            return
+            print(f"   > ⚠️ Engine is busy rendering. Skipping current invocation.")
+            return False
 
         self.engine_is_busy = True
         try:
@@ -1810,24 +1861,91 @@ class IslamicReelsStudio(ctk.CTk):
                     files_to_wipe = [script_file, audio_out, srt_out]
                     threading.Thread(target=self.delayed_asset_cleanup, args=(files_to_wipe,), daemon=True).start()
                     print("   > 🧹 Automated Queue: Temp audio/subtitle cleanup scheduled in 10 minutes.")
+                return True
         except Exception as e:
             import traceback
             print(f"   > ❌ Long-Form Pipeline Error: {e}")
             print(traceback.format_exc())
+            return False
         finally:
             self.engine_is_busy = False
 
     def trigger_manual_long_form(self):
-        prof_name = self.active_profile
-        settings = self.master_settings.get(prof_name, {})
-        
-        print(f"\n⚡ MANUAL OVERRIDE: Forcing Immediate Long-Form Generation for [{prof_name}]...")
-        
+        if self.engine_is_busy:
+            print("   > ⚠️ Engine is currently busy rendering. Please wait for the current render to complete.")
+            messagebox.showwarning("Engine Busy", "The engine is currently busy rendering another video.\nPlease wait for it to complete.")
+            return
+
+        print(f"\n========================================")
+        print(f"⚡ MANUAL OVERRIDE: Forcing Immediate Long-Form Generation for Pending Queue (Ignoring Interval)...")
+        print(f"========================================")
+
         import threading
         threading.Thread(
-            target=lambda: self.process_long_form_queue(prof_name, settings, force=True), 
+            target=self._run_force_queue_worker,
             daemon=True
         ).start()
+
+    def _run_force_queue_worker(self):
+        total_processed = 0
+        while True:
+            # Find next pending queue item across active profile first, then any other profile
+            target_prof = self.active_profile
+            target_settings = self.master_settings.get(target_prof, {})
+            target_queue_file = os.path.join(install_dir, "lf_queues", f"queue_{target_prof.replace(' ', '_')}.json")
+            
+            has_item = False
+            if os.path.exists(target_queue_file):
+                try:
+                    with open(target_queue_file, "r") as f:
+                        q = json.load(f)
+                        if q and len(q) > 0:
+                            has_item = True
+                except Exception:
+                    pass
+                    
+            if not has_item:
+                # Check other profiles in case items were submitted to another profile
+                for other_p, other_s in self.master_settings.items():
+                    if other_p == target_prof:
+                        continue
+                    oq_file = os.path.join(install_dir, "lf_queues", f"queue_{other_p.replace(' ', '_')}.json")
+                    if os.path.exists(oq_file):
+                        try:
+                            with open(oq_file, "r") as f:
+                                q = json.load(f)
+                                if q and len(q) > 0:
+                                    target_prof = other_p
+                                    target_settings = other_s
+                                    has_item = True
+                                    break
+                        except Exception:
+                            pass
+            
+            if not has_item:
+                if total_processed == 0:
+                    # Check if there's a manual script as fallback
+                    manual_path = getattr(self, "manual_script_path", "").strip() or target_settings.get("lf_manual_script_path", "").strip()
+                    if manual_path and os.path.exists(manual_path):
+                        print(f"   > ℹ️ [Force Queue] No items pending in queue. Running selected manual script: {os.path.basename(manual_path)}")
+                        self.process_long_form_queue(target_prof, target_settings, force=True, is_manual_script=True)
+                        break
+                    else:
+                        print(f"   > ⚠️ [Force Queue] No pending items in queue for [{self.active_profile}] or any other profile.")
+                        self.after(0, lambda: messagebox.showinfo("Queue Empty", "The queue is currently empty.\n\nSend a title + image to your Discord channel to add items to the queue, or select a manual script above."))
+                else:
+                    print(f"\n   > 🎉 [Force Queue] Completed all pending jobs ({total_processed} total). Queue is now clear!")
+                    self.after(0, lambda: messagebox.showinfo("Queue Complete", f"All pending queue items have been generated and processed successfully!\n({total_processed} video(s) rendered)"))
+                break
+                
+            print(f"\n⚡ [Force Queue] Processing pending job #{total_processed + 1} for [{target_prof}] (Time interval IGNORED)...")
+            success = self.process_long_form_queue(target_prof, target_settings, force=True, force_queue=True)
+            if success:
+                total_processed += 1
+                time.sleep(2)
+            else:
+                print(f"   > ⚠️ [Force Queue] Processing stopped after {total_processed} item(s).")
+                break
 
     def trigger_manual_last_render_upload(self):
         output_dir = os.path.join(install_dir, "lf_output")
