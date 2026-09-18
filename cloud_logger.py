@@ -1,11 +1,22 @@
 import os
-import gspread
 import json
-from oauth2client.service_account import ServiceAccountCredentials
-from google.oauth2.service_account import Credentials
 from datetime import datetime, timezone
 
+try:
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+    from google.oauth2.service_account import Credentials
+    HAS_GSPREAD = True
+except ImportError as _gspread_err:
+    gspread = None
+    ServiceAccountCredentials = None
+    Credentials = None
+    HAS_GSPREAD = False
+    print(f"   > ⚠️ Warning: Google Sheets logging disabled (missing module: {_gspread_err}). Run: pip install gspread oauth2client")
+
 def get_sheet(sheet_url):
+    if not HAS_GSPREAD:
+        return None
     if not os.path.exists("sheets_secret.json"):
         print("   > ❌ Sheets Error: 'sheets_secret.json' is physically missing from this profile's folder.")
         return None
@@ -86,6 +97,8 @@ def log_post(personal_sheet_url, master_sheet_url, reference, post_type="QuranRe
          print("   > ⚠️ Warning: Master Sheet not configured or inaccessible.")
 
 def get_gspread_client():
+    if not HAS_GSPREAD or not Credentials or not gspread:
+        return None
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_file('sheets_secret.json', scopes=scopes)
     return gspread.authorize(creds)
@@ -94,6 +107,8 @@ def push_settings_to_cloud(sheet_url, settings_dict):
     print("   > ☁️ Pushing Agency Profile to Google Sheets...")
     try:
         client = get_gspread_client()
+        if not client:
+            return False
         doc = client.open_by_url(sheet_url)
         try: sheet = doc.worksheet("Agency_Profile")
         except gspread.exceptions.WorksheetNotFound: sheet = doc.add_worksheet(title="Agency_Profile", rows="100", cols="5")
@@ -119,6 +134,8 @@ def pull_settings_from_cloud(sheet_url):
     print("   > ☁️ Pulling Agency Profile from Google Sheets...")
     try:
         client = get_gspread_client()
+        if not client:
+            return None
         doc = client.open_by_url(sheet_url)
         sheet = doc.worksheet("Agency_Profile")
         raw_json = sheet.acell('E2').value
@@ -136,6 +153,8 @@ def sync_lf_timestamp(sheet_url, timestamp_str):
     print("   > ☁️ Syncing Long-Form timestamp to Google Sheets...")
     try:
         client = get_gspread_client()
+        if not client:
+            return False
         doc = client.open_by_url(sheet_url)
         try:
             sheet = doc.worksheet("Long-Form Logs")

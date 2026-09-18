@@ -80,8 +80,19 @@ ctk.set_default_color_theme("green")
 
 SETTINGS_FILE = "settings.json"
 
-CARD_BG = "#212325"
-BG_COLOR = "#18191A"
+# --- AMB ENTERPRISE BRAND COLOR PALETTE ---
+BG_COLOR = "#0B0C0E"        # Root Window Background: Obsidian Black
+CARD_BG = "#1B1E23"         # Frames (Input/Telemetry): Dark Charcoal
+BORDER_COLOR = "#2C353D"    # Frame Borders & Utility Buttons: Gunmetal
+BORDER_HOVER = "#1E252B"    # Utility Hover
+TEAL_PRIMARY = "#00A8B5"    # Primary Action: Electric Teal
+TEAL_HOVER = "#008C99"      # Primary Hover
+CHAMPAGNE = "#D4C5B0"       # Secondary Action: Metallic Champagne
+CHAMPAGNE_HOVER = "#BBAA94" # Secondary Hover
+CRIMSON_STOP = "#8B2525"    # Stop Action: Muted Crimson
+CRIMSON_HOVER = "#6E1D1D"   # Stop Hover
+TEXT_NEON_GREEN = "#39FF14" # Live Activity Log content exception
+TEXT_WHITE = "#FFFFFF"      # High-contrast text
 
 class RedirectText:
     def __init__(self, text_widget, root):
@@ -188,37 +199,110 @@ class IslamicReelsStudio(ctk.CTk):
         self.tray_icon = None
 
         self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.header_frame.pack(pady=(30, 20), padx=40, fill="x")
+        self.header_frame.pack(pady=(20, 15), padx=40, fill="x")
         
-        self.title_label = ctk.CTkLabel(self.header_frame, text="🎬 YouTube Documentary Studio", font=ctk.CTkFont(family="Segoe UI", size=28, weight="bold"))
-        self.title_label.pack(side="left")
+        # AMB Brand Logo Loading
+        self.header_logo_img = None
+        logo_path = os.path.join(install_dir, "amb_logo.png")
+        if not os.path.exists(logo_path):
+            logo_path = os.path.join(install_dir, "logo.JPG")
+        if os.path.exists(logo_path):
+            try:
+                pil_logo = Image.open(logo_path)
+                self.header_logo_img = ctk.CTkImage(light_image=pil_logo, dark_image=pil_logo, size=(52, 31))
+            except Exception as e:
+                print(f"   > ⚠️ Notice: Header logo not loaded: {e}")
 
-        self.settings_btn = ctk.CTkButton(self.header_frame, text="🔒 Settings & Profiles", font=ctk.CTkFont(weight="bold"), fg_color="#E67E22", hover_color="#D35400", corner_radius=8, width=170, height=40, command=self.check_password_and_open)
+        # Left branding container: Logo + AMB ENTERPRISE + Subtitle
+        self.brand_box = ctk.CTkFrame(self.header_frame, fg_color="transparent")
+        self.brand_box.pack(side="left", fill="y")
+
+        if self.header_logo_img:
+            self.logo_label = ctk.CTkLabel(self.brand_box, image=self.header_logo_img, text="")
+            self.logo_label.pack(side="left", padx=(0, 12))
+
+        self.title_label = ctk.CTkLabel(
+            self.brand_box, 
+            text="AMB ENTERPRISE", 
+            font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
+            text_color="#FFFFFF"
+        )
+        self.title_label.pack(side="left", padx=(0, 12))
+
+        self.subtitle_label = ctk.CTkLabel(
+            self.brand_box, 
+            text="YouTube Documentary Studio", 
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            text_color="#D4C5B0"
+        )
+        self.subtitle_label.pack(side="left")
+
+        # Right: Admin Settings
+        self.settings_btn = ctk.CTkButton(
+            self.header_frame, 
+            text="⚙️ Admin Settings", 
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"), 
+            fg_color="#2C353D", 
+            hover_color="#1E252B", 
+            text_color="#FFFFFF",
+            border_width=1,
+            border_color="#2C353D",
+            corner_radius=4, 
+            width=150, 
+            height=36, 
+            command=self.check_password_and_open
+        )
         self.settings_btn.pack(side="right")
         
         disp = getattr(self, "gpu_display_name", "") or self.detected_gpu.upper()
-        self.active_display = ctk.CTkLabel(self, text=f"Currently Managing: {self.active_profile} | GPU: {disp} ⚡", font=ctk.CTkFont(size=13, weight="bold"), text_color="#A29BFE")
+        self.active_display = ctk.CTkLabel(
+            self, 
+            text=f"Currently Managing: {self.active_profile} | GPU: {disp} ⚡", 
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"), 
+            text_color="#00A8B5"
+        )
         self.active_display.pack(pady=(0, 10))
 
         # Status Uplink Card
-        self.status_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=15)
-        self.status_card.pack(pady=15, padx=40, fill="x")
+        self.status_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=4, border_width=1, border_color="#2C353D")
+        self.status_card.pack(pady=10, padx=40, fill="x")
         
-        ctk.CTkLabel(self.status_card, text="📡 Server Uplink:", font=ctk.CTkFont(weight="bold", size=13)).pack(side="left", padx=25, pady=15)
+        ctk.CTkLabel(self.status_card, text="📡 Server Uplink:", font=ctk.CTkFont(family="Segoe UI", weight="bold", size=12), text_color="#FFFFFF").pack(side="left", padx=20, pady=12)
         
-        self.lbl_yt = ctk.CTkLabel(self.status_card, text="⚪ YouTube", font=ctk.CTkFont(size=13))
-        self.lbl_yt.pack(side="left", padx=15)
-        self.lbl_discord = ctk.CTkLabel(self.status_card, text="⚪ Discord Bot", font=ctk.CTkFont(size=13))
-        self.lbl_discord.pack(side="left", padx=15)
+        self.lbl_yt = ctk.CTkLabel(self.status_card, text="⚪ YouTube", font=ctk.CTkFont(family="Segoe UI", size=12))
+        self.lbl_yt.pack(side="left", padx=12)
+        self.lbl_discord = ctk.CTkLabel(self.status_card, text="⚪ Discord Bot", font=ctk.CTkFont(family="Segoe UI", size=12))
+        self.lbl_discord.pack(side="left", padx=12)
         
-        self.lbl_last_post = ctk.CTkLabel(self.status_card, text="☁️ Last Check: ...", font=ctk.CTkFont(size=13, weight="bold"), text_color="#A29BFE")
-        self.lbl_last_post.pack(side="left", padx=20)
+        self.lbl_last_post = ctk.CTkLabel(self.status_card, text="☁️ Last Check: ...", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"), text_color="#D4C5B0")
+        self.lbl_last_post.pack(side="left", padx=16)
 
-        self.refresh_btn = ctk.CTkButton(self.status_card, text="🔄 Ping", width=60, height=28, corner_radius=6, fg_color="#3A3E41", hover_color="#4A4E51", command=self.refresh_status_bg)
+        self.refresh_btn = ctk.CTkButton(
+            self.status_card, 
+            text="🔄 Ping", 
+            width=70, 
+            height=28, 
+            corner_radius=4, 
+            fg_color="#2C353D", 
+            hover_color="#1E252B", 
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            command=self.refresh_status_bg
+        )
         self.refresh_btn.pack(side="right", padx=20)
 
-        # Visible GUI Terminal Window
-        self.log_textbox = ctk.CTkTextbox(self, width=820, height=200, fg_color="#0D0E0F", text_color="#00FF41", font=("Consolas", 12), corner_radius=10, border_width=1, border_color="#2B2B2B")
+        # Visible GUI Terminal Window (The Neon Green Exception)
+        self.log_textbox = ctk.CTkTextbox(
+            self, 
+            width=820, 
+            height=200, 
+            fg_color="#000000", 
+            text_color="#39FF14", 
+            font=("Consolas", 12), 
+            corner_radius=4, 
+            border_width=1, 
+            border_color="#2C353D"
+        )
         self.log_textbox.pack(pady=10, padx=40, fill="both", expand=True)
         self.log_textbox.configure(state="disabled")
         redirector = RedirectText(self.log_textbox, self)
@@ -226,7 +310,7 @@ class IslamicReelsStudio(ctk.CTk):
         sys.stderr = redirector
 
         # Multi-Stage Task Progress Bar Card with Proceeding Rate Display
-        self.upload_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=12)
+        self.upload_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=4, border_width=1, border_color="#2C353D")
         self.upload_card.pack(pady=(0, 6), padx=40, fill="x")
         upload_inner = ctk.CTkFrame(self.upload_card, fg_color="transparent")
         upload_inner.pack(fill="x", padx=20, pady=(8, 10))
@@ -235,19 +319,39 @@ class IslamicReelsStudio(ctk.CTk):
         progress_info_row = ctk.CTkFrame(upload_inner, fg_color="transparent")
         progress_info_row.pack(fill="x", pady=(0, 6))
 
-        self.task_progress_label = ctk.CTkLabel(progress_info_row, text="⚡ Task Progress: Idle", font=ctk.CTkFont(weight="bold", size=13), anchor="w")
+        self.task_progress_label = ctk.CTkLabel(
+            progress_info_row, 
+            text="⚡ Task Progress: Idle", 
+            font=ctk.CTkFont(family="Segoe UI", weight="bold", size=12), 
+            text_color="#FFFFFF",
+            anchor="w"
+        )
         self.task_progress_label.pack(side="left", fill="x", expand=True)
 
-        self.upload_pct_label = ctk.CTkLabel(progress_info_row, text="Idle", font=ctk.CTkFont(size=13, weight="bold"), text_color="#A29BFE", anchor="e")
+        self.upload_pct_label = ctk.CTkLabel(
+            progress_info_row, 
+            text="Idle", 
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"), 
+            text_color="#D4C5B0", 
+            anchor="e"
+        )
         self.upload_pct_label.pack(side="right")
 
         # Bottom row: Full-Width Visual Progress Bar
-        self.upload_progress_bar = ctk.CTkProgressBar(upload_inner, height=18, corner_radius=9, progress_color="#00D2FF", fg_color="#2B2B2B")
+        self.upload_progress_bar = ctk.CTkProgressBar(
+            upload_inner, 
+            height=16, 
+            corner_radius=4, 
+            progress_color="#00A8B5", 
+            fg_color="#0B0C0E",
+            border_width=1,
+            border_color="#2C353D"
+        )
         self.upload_progress_bar.set(0)
         self.upload_progress_bar.pack(fill="x", expand=True)
 
         # Manual Mode Card: Script & Thumbnail Selection
-        self.manual_script_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=12)
+        self.manual_script_card = ctk.CTkFrame(self, fg_color=CARD_BG, corner_radius=4, border_width=1, border_color="#2C353D")
         self.manual_script_card.pack(pady=(0, 6), padx=40, fill="x")
         manual_inner = ctk.CTkFrame(self.manual_script_card, fg_color="transparent")
         manual_inner.pack(fill="x", padx=20, pady=(10, 10))
@@ -255,12 +359,22 @@ class IslamicReelsStudio(ctk.CTk):
         # Row 1: Manual Script
         script_row = ctk.CTkFrame(manual_inner, fg_color="transparent")
         script_row.pack(fill="x", pady=(0, 6))
-        ctk.CTkLabel(script_row, text="📄 Manual Script:", font=ctk.CTkFont(weight="bold", size=13), width=130, anchor="w").pack(side="left")
-        self.manual_script_entry = ctk.CTkEntry(script_row, placeholder_text="Select a .txt script file...", font=ctk.CTkFont(size=12))
+        ctk.CTkLabel(script_row, text="📄 Manual Script:", font=ctk.CTkFont(family="Segoe UI", weight="bold", size=12), text_color="#FFFFFF", width=130, anchor="w").pack(side="left")
+        self.manual_script_entry = ctk.CTkEntry(
+            script_row, 
+            placeholder_text="Select a .txt script file...", 
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color="#1B1E23",
+            border_color="#2C353D",
+            border_width=1,
+            text_color="#FFFFFF",
+            corner_radius=4
+        )
         self.manual_script_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.manual_script_browse_btn = ctk.CTkButton(
             script_row, text="📁 Browse Script", width=120, height=30,
-            corner_radius=8, fg_color="#3A3E41", hover_color="#4A4E51",
+            corner_radius=4, fg_color="#2C353D", hover_color="#1E252B", text_color="#FFFFFF",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
             command=self._browse_manual_script
         )
         self.manual_script_browse_btn.pack(side="right")
@@ -268,23 +382,33 @@ class IslamicReelsStudio(ctk.CTk):
         # Row 2: Manual Thumbnail Picture
         thumb_row = ctk.CTkFrame(manual_inner, fg_color="transparent")
         thumb_row.pack(fill="x", pady=(0, 8))
-        ctk.CTkLabel(thumb_row, text="🖼️ Thumbnail Pic:", font=ctk.CTkFont(weight="bold", size=13), width=130, anchor="w").pack(side="left")
-        self.manual_thumb_entry = ctk.CTkEntry(thumb_row, placeholder_text="Select thumbnail picture (.jpg, .png, .webp)...", font=ctk.CTkFont(size=12))
+        ctk.CTkLabel(thumb_row, text="🖼️ Thumbnail Pic:", font=ctk.CTkFont(family="Segoe UI", weight="bold", size=12), text_color="#FFFFFF", width=130, anchor="w").pack(side="left")
+        self.manual_thumb_entry = ctk.CTkEntry(
+            thumb_row, 
+            placeholder_text="Select thumbnail picture (.jpg, .png, .webp)...", 
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color="#1B1E23",
+            border_color="#2C353D",
+            border_width=1,
+            text_color="#FFFFFF",
+            corner_radius=4
+        )
         self.manual_thumb_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.manual_thumb_browse_btn = ctk.CTkButton(
             thumb_row, text="📁 Browse Image", width=120, height=30,
-            corner_radius=8, fg_color="#3A3E41", hover_color="#4A4E51",
+            corner_radius=4, fg_color="#2C353D", hover_color="#1E252B", text_color="#FFFFFF",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
             command=self._browse_manual_thumbnail
         )
         self.manual_thumb_browse_btn.pack(side="right")
 
-        # Row 3: Instant Render Button
+        # Row 3: Instant Render Button (Primary Action)
         action_row = ctk.CTkFrame(manual_inner, fg_color="transparent")
         action_row.pack(fill="x", pady=(2, 0))
         self.render_manual_btn = ctk.CTkButton(
             action_row, text="🎬 RENDER MANUAL VIDEO NOW (Script + Thumbnail)",
-            height=34, corner_radius=8, font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color="#8E44AD", hover_color="#732D91",
+            height=36, corner_radius=4, font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            fg_color="#00A8B5", hover_color="#008C99", text_color="#FFFFFF",
             command=self.trigger_render_manual_now
         )
         self.render_manual_btn.pack(fill="x")
@@ -300,24 +424,42 @@ class IslamicReelsStudio(ctk.CTk):
 
         # Control and Action Buttons Card
         self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.btn_frame.pack(pady=(10, 20), padx=40, fill="x")
+        self.btn_frame.pack(pady=(8, 16), padx=40, fill="x")
 
-        self.lbl_countdown = ctk.CTkLabel(self.btn_frame, text="Status: Ready to Render", font=ctk.CTkFont(size=18, weight="bold"), text_color="#F39C12")
-        self.lbl_countdown.pack(side="top", pady=(0, 15))
+        self.lbl_countdown = ctk.CTkLabel(
+            self.btn_frame, 
+            text="Status: Ready to Render", 
+            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"), 
+            text_color="#00A8B5"
+        )
+        self.lbl_countdown.pack(side="top", pady=(0, 10))
 
-        self.generate_btn = ctk.CTkButton(self.btn_frame, text="🎬 START LONG-FORM AUTOMATION ENGINE", height=50, corner_radius=10, font=ctk.CTkFont(size=16, weight="bold"), command=self.toggle_automation)
+        self.generate_btn = ctk.CTkButton(
+            self.btn_frame, 
+            text="🎬 START LONG-FORM AUTOMATION ENGINE", 
+            height=46, 
+            corner_radius=4, 
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"), 
+            fg_color="#00A8B5",
+            hover_color="#008C99",
+            text_color="#FFFFFF",
+            command=self.toggle_automation
+        )
         self.generate_btn.pack(side="top", fill="x", pady=(0, 10))
 
         # Horizontal Row for Manual Gen and Manual Push Buttons
         self.manual_actions_frame = ctk.CTkFrame(self.btn_frame, fg_color="transparent")
-        self.manual_actions_frame.pack(fill="x", pady=(0, 10))
+        self.manual_actions_frame.pack(fill="x")
 
         self.manual_lf_btn = ctk.CTkButton(
             self.manual_actions_frame,
             text="🎥 MANUAL LONG-FORM GEN (Force Queue)",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color=["#FF9F43", "#EE5A24"],
-            hover_color=["#F8EFBA", "#EA2027"],
+            height=36,
+            corner_radius=4,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            fg_color="#D4C5B0",
+            hover_color="#BBAA94",
+            text_color="#0B0C0E",
             command=self.trigger_manual_long_form
         )
         self.manual_lf_btn.pack(side="left", fill="x", expand=True, padx=(0, 5))
@@ -325,12 +467,16 @@ class IslamicReelsStudio(ctk.CTk):
         self.manual_upload_btn = ctk.CTkButton(
             self.manual_actions_frame,
             text="📤 Push Last Render to YouTube",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color="#2980B9",
-            hover_color="#1F618D",
+            height=36,
+            corner_radius=4,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            fg_color="#2C353D",
+            hover_color="#1E252B",
+            text_color="#FFFFFF",
             command=self.trigger_manual_last_render_upload
         )
         self.manual_upload_btn.pack(side="right", fill="x", expand=True, padx=(5, 0))
+
 
         self.populate_main_ui()
         self.refresh_status_bg()
@@ -383,9 +529,9 @@ class IslamicReelsStudio(ctk.CTk):
                     clean_stage = stage_text.lstrip("⚡ ").rstrip(":")
                     self.task_progress_label.configure(text=f"⚡ {clean_stage}:")
                 if pct >= 100:
-                    self.upload_pct_label.configure(text="✅ 100%", text_color="#2ECC71")
+                    self.upload_pct_label.configure(text="✅ 100%", text_color="#00A8B5")
                 else:
-                    self.upload_pct_label.configure(text=f"{int(pct)}%", text_color="#00D2FF")
+                    self.upload_pct_label.configure(text=f"{int(pct)}%", text_color="#00A8B5")
             except Exception:
                 pass
         self.after(0, _do_update)
@@ -400,7 +546,7 @@ class IslamicReelsStudio(ctk.CTk):
         try:
             self.upload_progress_bar.set(0)
             self.task_progress_label.configure(text="⚡ Task Progress:")
-            self.upload_pct_label.configure(text="Idle", text_color="#A29BFE")
+            self.upload_pct_label.configure(text="Idle", text_color="#D4C5B0")
         except Exception:
             pass
 
@@ -742,7 +888,7 @@ class IslamicReelsStudio(ctk.CTk):
         disp = getattr(self, "gpu_display_name", "")
         if not disp or (gpu != "cuda" and "NVIDIA" in disp):
             disp = gpu.upper()
-        self.active_display.configure(text=f"Currently Managing: {self.active_profile} | GPU: {disp} ⚡")
+        self.active_display.configure(text=f"Currently Managing: {self.active_profile} | GPU: {disp} ⚡", text_color="#00A8B5")
         
         # Keep manual script and thumbnail settings in sync when active profile changes
         self.manual_script_path = self.get_active_setting("lf_manual_script_path", "")
@@ -788,10 +934,10 @@ class IslamicReelsStudio(ctk.CTk):
         try:
             if self.engine_is_busy:
                 status_text = "Status: Engine Busy..."
-                color = "#F39C12"
+                color = "#D4C5B0"
             else:
                 status_text = "Status: Ready to Render"
-                color = "#2ECC71"
+                color = "#00A8B5"
             self.lbl_countdown.configure(text=status_text, text_color=color)
         except Exception:
             pass
@@ -881,22 +1027,22 @@ class IslamicReelsStudio(ctk.CTk):
             self.last_time = None
         
         def update_labels():
-            self.lbl_yt.configure(text=status["youtube"], text_color="#2FA572" if "OK" in status["youtube"] else "#D9534F" if "Missing" in status["youtube"] else "gray")
+            self.lbl_yt.configure(text=status["youtube"], text_color="#00A8B5" if "OK" in status["youtube"] else "#8B2525" if "Missing" in status["youtube"] else "#D4C5B0")
 
             # Update Discord Bot Status
             bot_client = getattr(self, "discord_client", None)
             if bot_client is not None and bot_client.is_ready():
-                self.lbl_discord.configure(text="🟢 Discord Bot OK", text_color="#2FA572")
+                self.lbl_discord.configure(text="🟢 Discord Bot OK", text_color="#00A8B5")
             elif bot_client is not None and not bot_client.is_closed():
-                self.lbl_discord.configure(text="🟡 Discord Sync...", text_color="gray")
+                self.lbl_discord.configure(text="🟡 Discord Sync...", text_color="#D4C5B0")
             else:
-                self.lbl_discord.configure(text="🔴 Discord Offline", text_color="#D9534F")
+                self.lbl_discord.configure(text="🔴 Discord Offline", text_color="#8B2525")
                 
             if self.last_time:
                 time_str = self.last_time.strftime("%Y-%m-%d %I:%M %p")
-                self.lbl_last_post.configure(text=f"☁️ Last Upload: {time_str}", text_color="#2CC985")
+                self.lbl_last_post.configure(text=f"☁️ Last Upload: {time_str}", text_color="#00A8B5")
             else:
-                self.lbl_last_post.configure(text="☁️ Last Upload: None", text_color="#F39C12")
+                self.lbl_last_post.configure(text="☁️ Last Upload: None", text_color="#D4C5B0")
 
         self.after(0, update_labels)
 
@@ -953,27 +1099,49 @@ class IslamicReelsStudio(ctk.CTk):
         settings_win.attributes("-topmost", True)
         settings_win.grab_set() 
         
-        top_bar = ctk.CTkFrame(settings_win, fg_color=CARD_BG, corner_radius=10)
+        top_bar = ctk.CTkFrame(settings_win, fg_color=CARD_BG, corner_radius=4, border_width=1, border_color="#2C353D")
         top_bar.pack(fill="x", padx=20, pady=(20, 10))
 
-        ctk.CTkLabel(top_bar, text="🏢 Agency Profiles", font=ctk.CTkFont(size=18, weight="bold")).pack(side="left", padx=15, pady=15)
+        ctk.CTkLabel(top_bar, text="🏢 Agency Profiles", font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"), text_color="#FFFFFF").pack(side="left", padx=15, pady=15)
 
         profile_scroll = ctk.CTkScrollableFrame(top_bar, orientation="horizontal", height=50, fg_color="transparent")
         profile_scroll.pack(side="left", fill="x", expand=True, padx=10, pady=5)
         
         for p_name in self.master_settings.keys():
-            color = "#E67E22" if p_name == self.active_profile else "#3A3E41"
-            btn = ctk.CTkButton(profile_scroll, text=p_name, fg_color=color, corner_radius=20, width=100, 
-                                command=lambda n=p_name: self.switch_settings_profile(n, settings_win))
+            color = "#00A8B5" if p_name == self.active_profile else "#2C353D"
+            hover_c = "#008C99" if p_name == self.active_profile else "#1E252B"
+            btn = ctk.CTkButton(
+                profile_scroll, text=p_name, fg_color=color, hover_color=hover_c, 
+                text_color="#FFFFFF", corner_radius=4, width=100, 
+                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+                command=lambda n=p_name: self.switch_settings_profile(n, settings_win)
+            )
             btn.pack(side="left", padx=5)
 
-        ctk.CTkButton(top_bar, text="- Delete", fg_color="#E74C3C", hover_color="#C0392B", width=60, command=lambda: self.delete_profile_ui(settings_win)).pack(side="right", padx=(5, 15))
-        ctk.CTkButton(top_bar, text="+ New", fg_color="#27AE60", hover_color="#1E8449", width=60, command=lambda: self.create_new_profile_ui(settings_win)).pack(side="right", padx=5)
+        ctk.CTkButton(
+            top_bar, text="- Delete", fg_color="#8B2525", hover_color="#6E1D1D", 
+            text_color="#FFFFFF", corner_radius=4, width=65, 
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            command=lambda: self.delete_profile_ui(settings_win)
+        ).pack(side="right", padx=(5, 15))
+
+        ctk.CTkButton(
+            top_bar, text="+ New", fg_color="#00A8B5", hover_color="#008C99", 
+            text_color="#FFFFFF", corner_radius=4, width=65, 
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            command=lambda: self.create_new_profile_ui(settings_win)
+        ).pack(side="right", padx=5)
 
         bottom_action_frame = ctk.CTkFrame(settings_win, fg_color="transparent")
         bottom_action_frame.pack(side="bottom", fill="x", pady=(10, 20))
 
-        tabview = ctk.CTkTabview(settings_win, width=650, height=550, fg_color=CARD_BG)
+        tabview = ctk.CTkTabview(
+            settings_win, width=650, height=550, fg_color=CARD_BG, corner_radius=4,
+            segmented_button_selected_color="#00A8B5",
+            segmented_button_selected_hover_color="#008C99",
+            segmented_button_unselected_color="#2C353D",
+            segmented_button_unselected_hover_color="#1E252B"
+        )
         tabview.pack(padx=20, pady=10, fill="both", expand=True)
 
         tabview.add("General & Integration")
@@ -983,8 +1151,13 @@ class IslamicReelsStudio(ctk.CTk):
         def make_entry(parent, label_text, dict_key, is_password=False):
             f = ctk.CTkFrame(parent, fg_color="transparent")
             f.pack(pady=8, fill="x")
-            ctk.CTkLabel(f, text=label_text, width=140, anchor="w").pack(side="left")
-            e = ctk.CTkEntry(f, show="*" if is_password else "")
+            ctk.CTkLabel(f, text=label_text, width=140, anchor="w", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="left")
+            e = ctk.CTkEntry(
+                f, show="*" if is_password else "", 
+                fg_color="#1B1E23", border_color="#2C353D", border_width=1, 
+                text_color="#FFFFFF", corner_radius=4, 
+                font=ctk.CTkFont(family="Segoe UI", size=12)
+            )
             e.insert(0, self.get_active_setting(dict_key, ""))
             e.pack(side="right", fill="x", expand=True)
             return e
@@ -1015,8 +1188,8 @@ class IslamicReelsStudio(ctk.CTk):
         
         prof_sheet_path = os.path.join(creds_vault_dir, self.active_profile, "sheets_secret.json")
         sh_status = "✅ Active" if os.path.exists(prof_sheet_path) else "❌ Missing"
-        sh_color = "#27AE60" if os.path.exists(prof_sheet_path) else "#E74C3C"
-        sh_status_label = ctk.CTkLabel(sh_row, text=sh_status, text_color=sh_color, font=ctk.CTkFont(weight="bold"))
+        sh_color = "#00A8B5" if os.path.exists(prof_sheet_path) else "#8B2525"
+        sh_status_label = ctk.CTkLabel(sh_row, text=sh_status, text_color=sh_color, font=ctk.CTkFont(family="Segoe UI", weight="bold"))
         sh_status_label.pack(side="left", padx=10)
 
         def install_sh_json():
@@ -1026,17 +1199,22 @@ class IslamicReelsStudio(ctk.CTk):
                     os.makedirs(os.path.dirname(prof_sheet_path), exist_ok=True)
                     shutil.copy(file, "sheets_secret.json")
                     shutil.copy(file, prof_sheet_path)
-                    sh_status_label.configure(text="✅ Active", text_color="#27AE60")
+                    sh_status_label.configure(text="✅ Active", text_color="#00A8B5")
                     messagebox.showinfo("Sheets Linked", "Service Account JSON installed successfully for this profile!")
                 except Exception as e:
                     messagebox.showerror("Install Error", f"Failed to install JSON:\n{e}")
 
-        ctk.CTkButton(sh_row, text="📁 Browse & Install", fg_color="#F39C12", hover_color="#D68910", width=140, command=install_sh_json).pack(side="right")
+        ctk.CTkButton(
+            sh_row, text="📁 Browse & Install", width=140, height=30,
+            corner_radius=4, fg_color="#2C353D", hover_color="#1E252B", text_color="#FFFFFF",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            command=install_sh_json
+        ).pack(side="right")
 
-        ctk.CTkLabel(gen_frame, text="Security & Global Profile Settings", font=ctk.CTkFont(weight="bold")).pack(anchor="w", pady=(15, 5))
+        ctk.CTkLabel(gen_frame, text="Security & Global Profile Settings", font=ctk.CTkFont(family="Segoe UI", weight="bold")).pack(anchor="w", pady=(15, 5))
         admin_password_entry = make_entry(gen_frame, "Admin Password:", "admin_password", is_password=True)
         
-        ctk.CTkLabel(gen_frame, text="Discord Master Agent Integration", font=ctk.CTkFont(weight="bold"), text_color="#A29BFE").pack(anchor="w", pady=(15, 5))
+        ctk.CTkLabel(gen_frame, text="Discord Master Agent Integration", font=ctk.CTkFont(family="Segoe UI", weight="bold"), text_color="#D4C5B0").pack(anchor="w", pady=(15, 5))
         discord_bot_token_entry = make_entry(gen_frame, "Discord Bot Token:", "discord_bot_token", is_password=True)
         discord_channel_id_entry = make_entry(gen_frame, "Target Channel ID:", "discord_channel_id")
 
@@ -1046,16 +1224,16 @@ class IslamicReelsStudio(ctk.CTk):
         yt_frame = ctk.CTkFrame(tabview.tab("YouTube API OAuth"), fg_color="transparent")
         yt_frame.pack(fill="both", expand=True, pady=10)
         
-        ctk.CTkLabel(yt_frame, text="Google OAuth Credentials for YouTube Upload", font=ctk.CTkFont(weight="bold")).pack(anchor="w", pady=(10, 5))
+        ctk.CTkLabel(yt_frame, text="Google OAuth Credentials for YouTube Upload", font=ctk.CTkFont(family="Segoe UI", weight="bold")).pack(anchor="w", pady=(10, 5))
         
         yt_row = ctk.CTkFrame(yt_frame, fg_color="transparent")
         yt_row.pack(fill="x", pady=10)
-        ctk.CTkLabel(yt_row, text="OAuth JSON File:", width=130, anchor="w").pack(side="left")
+        ctk.CTkLabel(yt_row, text="OAuth JSON File:", width=130, anchor="w", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="left")
         
         prof_yt_path = os.path.join(creds_vault_dir, self.active_profile, "client_secret.json")
         yt_status = "✅ Installed" if os.path.exists(prof_yt_path) else "❌ Missing"
-        yt_color = "#27AE60" if os.path.exists(prof_yt_path) else "#E74C3C"
-        yt_status_label = ctk.CTkLabel(yt_row, text=yt_status, text_color=yt_color, font=ctk.CTkFont(weight="bold"))
+        yt_color = "#00A8B5" if os.path.exists(prof_yt_path) else "#8B2525"
+        yt_status_label = ctk.CTkLabel(yt_row, text=yt_status, text_color=yt_color, font=ctk.CTkFont(family="Segoe UI", weight="bold"))
         yt_status_label.pack(side="left", padx=10)
 
         def install_yt_json():
@@ -1065,17 +1243,25 @@ class IslamicReelsStudio(ctk.CTk):
                     os.makedirs(os.path.dirname(prof_yt_path), exist_ok=True)
                     shutil.copy(file, "client_secret.json")
                     shutil.copy(file, prof_yt_path)
-                    yt_status_label.configure(text="✅ Installed", text_color="#27AE60")
+                    yt_status_label.configure(text="✅ Installed", text_color="#00A8B5")
                     messagebox.showinfo("YouTube Unlocked", "YouTube OAuth JSON installed successfully for this profile!")
                 except Exception as e:
                     messagebox.showerror("Install Error", f"Failed to install JSON:\n{e}")
 
-        ctk.CTkButton(yt_row, text="📁 Browse & Install", fg_color="#C0392B", hover_color="#922B21", width=140, command=install_yt_json).pack(side="right")
+        ctk.CTkButton(
+            yt_row, text="📁 Browse & Install", width=140, height=30,
+            corner_radius=4, fg_color="#2C353D", hover_color="#1E252B", text_color="#FFFFFF",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            command=install_yt_json
+        ).pack(side="right")
 
         # Scrollable Groq keys list in Tab 2
-        ctk.CTkLabel(yt_frame, text="🔑 Groq API Keys (Paste one key per line for auto-rotation):", font=ctk.CTkFont(weight="bold", size=14)).pack(anchor="w", pady=(20, 5))
+        ctk.CTkLabel(yt_frame, text="🔑 Groq API Keys (Paste one key per line for auto-rotation):", font=ctk.CTkFont(family="Segoe UI", weight="bold", size=13), text_color="#FFFFFF").pack(anchor="w", pady=(20, 5))
         
-        yt_keys_textbox = ctk.CTkTextbox(yt_frame, height=180, fg_color="#0D0E0F", text_color="#00FF41", font=("Consolas", 12), corner_radius=10, border_width=1, border_color="#2B2B2B")
+        yt_keys_textbox = ctk.CTkTextbox(
+            yt_frame, height=180, fg_color="#000000", text_color="#39FF14", 
+            font=("Consolas", 12), corner_radius=4, border_width=1, border_color="#2C353D"
+        )
         yt_keys_textbox.pack(fill="both", expand=True, pady=(0, 10))
         
         # Populate textbox with active profile keys
@@ -1120,16 +1306,23 @@ class IslamicReelsStudio(ctk.CTk):
 
         lf_upl_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         lf_upl_row.pack(fill="x", pady=10)
-        ctk.CTkLabel(lf_upl_row, text="Post Interval (Hrs):").pack(side="left", padx=(10, 10))
+        ctk.CTkLabel(lf_upl_row, text="Post Interval (Hrs):", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="left", padx=(10, 10))
         lf_interval_var = ctk.StringVar(value=str(self.get_active_setting("lf_upload_interval", 24)))
-        ctk.CTkOptionMenu(lf_upl_row, variable=lf_interval_var, values=[str(i) for i in range(1, 73)], width=80).pack(side="left")
+        ctk.CTkOptionMenu(
+            lf_upl_row, variable=lf_interval_var, values=[str(i) for i in range(1, 73)], width=80,
+            fg_color="#1B1E23", button_color="#2C353D", button_hover_color="#1E252B", text_color="#FFFFFF", corner_radius=4
+        ).pack(side="left")
 
         # Direct Target Duration Input
         lf_length_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         lf_length_row.pack(fill="x", pady=5)
-        ctk.CTkLabel(lf_length_row, text="Target Video Duration (Minutes):", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=(10, 5))
+        ctk.CTkLabel(lf_length_row, text="Target Video Duration (Minutes):", font=ctk.CTkFont(family="Segoe UI", weight="bold")).pack(side="left", padx=(10, 5))
         lf_target_minutes_var = ctk.StringVar(value=str(self.get_active_setting("lf_target_minutes", 2)))
-        lf_target_minutes_entry = ctk.CTkEntry(lf_length_row, textvariable=lf_target_minutes_var, width=80)
+        lf_target_minutes_entry = ctk.CTkEntry(
+            lf_length_row, textvariable=lf_target_minutes_var, width=80,
+            fg_color="#1B1E23", border_color="#2C353D", border_width=1, text_color="#FFFFFF", corner_radius=4,
+            font=ctk.CTkFont(family="Segoe UI", size=12)
+        )
         lf_target_minutes_entry.pack(side="left", padx=5)
         ctk.CTkLabel(lf_length_row, text="← Enter exact minutes (e.g. 2 for 2-min video, 60 for 1-hour video)", font=ctk.CTkFont(size=11), text_color="#888").pack(side="left", padx=(10, 0))
 
@@ -1137,9 +1330,12 @@ class IslamicReelsStudio(ctk.CTk):
         voice_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         voice_row.pack(fill="x", pady=10)
         
-        ctk.CTkLabel(voice_row, text="Voice Actor (TTS):").pack(side="left", padx=(10, 5))
+        ctk.CTkLabel(voice_row, text="Voice Actor (TTS):", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="left", padx=(10, 5))
         lf_voice_actor_var = ctk.StringVar(value=self.get_active_setting("lf_voice_actor", "English (US) Bella (Premium Female)"))
-        lf_voice_actor_menu = ctk.CTkOptionMenu(voice_row, variable=lf_voice_actor_var, values=[], width=220)
+        lf_voice_actor_menu = ctk.CTkOptionMenu(
+            voice_row, variable=lf_voice_actor_var, values=[], width=220,
+            fg_color="#1B1E23", button_color="#2C353D", button_hover_color="#1E252B", text_color="#FFFFFF", corner_radius=4
+        )
         lf_voice_actor_menu.pack(side="left", padx=5)
 
         def play_test_voice():
@@ -1174,7 +1370,8 @@ class IslamicReelsStudio(ctk.CTk):
 
         ctk.CTkButton(
             voice_row, text="▶ Play Test", width=90, height=28,
-            corner_radius=6, fg_color="#2ECC71", hover_color="#27AE60",
+            corner_radius=4, fg_color="#2C353D", hover_color="#1E252B", text_color="#FFFFFF",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
             command=play_test_voice
         ).pack(side="left", padx=5)
 
@@ -1214,24 +1411,31 @@ class IslamicReelsStudio(ctk.CTk):
             variable=lf_main_lang_var, 
             values=["English", "German", "Russian", "Arabic", "Urdu"], 
             width=110,
+            fg_color="#1B1E23", button_color="#2C353D", button_hover_color="#1E252B", text_color="#FFFFFF", corner_radius=4,
             command=update_voice_menu
         )
         lf_main_lang_menu.pack(side="left", padx=5)
 
-        ctk.CTkLabel(lang_row, text="Sub Language:").pack(side="left", padx=(15, 5))
+        ctk.CTkLabel(lang_row, text="Sub Language:", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="left", padx=(15, 5))
         lf_sub_lang_var = ctk.StringVar(value=self.get_active_setting("lf_subtitle_language", "Arabic"))
-        ctk.CTkOptionMenu(lang_row, variable=lf_sub_lang_var, values=["Arabic", "English", "German", "Russian", "Urdu", "None"], width=110).pack(side="left", padx=5)
+        ctk.CTkOptionMenu(
+            lang_row, variable=lf_sub_lang_var, 
+            values=["Arabic", "English", "German", "Russian", "Urdu", "None"], 
+            width=110,
+            fg_color="#1B1E23", button_color="#2C353D", button_hover_color="#1E252B", text_color="#FFFFFF", corner_radius=4
+        ).pack(side="left", padx=5)
 
         # Title & Description Language Dropdown
         meta_lang_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         meta_lang_row.pack(fill="x", pady=10)
-        ctk.CTkLabel(meta_lang_row, text="Title & Description Language:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=(10, 5))
+        ctk.CTkLabel(meta_lang_row, text="Title & Description Language:", font=ctk.CTkFont(family="Segoe UI", weight="bold")).pack(side="left", padx=(10, 5))
         lf_metadata_lang_var = ctk.StringVar(value=self.get_active_setting("lf_metadata_language", "English"))
         ctk.CTkOptionMenu(
             meta_lang_row,
             variable=lf_metadata_lang_var,
             values=["English", "Arabic", "German", "Russian", "Urdu"],
-            width=140
+            width=140,
+            fg_color="#1B1E23", button_color="#2C353D", button_hover_color="#1E252B", text_color="#FFFFFF", corner_radius=4
         ).pack(side="left", padx=5)
         ctk.CTkLabel(meta_lang_row, text="← AI generates title, description & hashtags in this language", font=ctk.CTkFont(size=11), text_color="#888").pack(side="left", padx=(10, 0))
 
@@ -1245,36 +1449,64 @@ class IslamicReelsStudio(ctk.CTk):
         sub_style_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         sub_style_row.pack(fill="x", pady=10)
         
-        ctk.CTkLabel(sub_style_row, text="Sub Size:").pack(side="left", padx=(10, 5))
+        ctk.CTkLabel(sub_style_row, text="Sub Size:", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="left", padx=(10, 5))
         self.lf_sub_size_var = ctk.StringVar(value=str(self.get_active_setting("lf_sub_size", "24")))
-        # Expanded values to include smaller sizes (12, 14, 16)
-        ctk.CTkOptionMenu(sub_style_row, variable=self.lf_sub_size_var, values=["12", "14", "16", "18", "20", "24", "28", "32", "36", "40"], width=80).pack(side="left", padx=5)
+        ctk.CTkOptionMenu(
+            sub_style_row, variable=self.lf_sub_size_var, 
+            values=["12", "14", "16", "18", "20", "24", "28", "32", "36", "40"], 
+            width=80,
+            fg_color="#1B1E23", button_color="#2C353D", button_hover_color="#1E252B", text_color="#FFFFFF", corner_radius=4
+        ).pack(side="left", padx=5)
 
-        ctk.CTkLabel(sub_style_row, text="Sub Color:").pack(side="left", padx=(15, 5))
+        ctk.CTkLabel(sub_style_row, text="Sub Color:", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="left", padx=(15, 5))
         self.lf_sub_color_var = ctk.StringVar(value=self.get_active_setting("lf_sub_color", "Yellow"))
-        ctk.CTkOptionMenu(sub_style_row, variable=self.lf_sub_color_var, values=["Yellow", "White", "Green", "Cyan"], width=90).pack(side="left", padx=5)
+        ctk.CTkOptionMenu(
+            sub_style_row, variable=self.lf_sub_color_var, 
+            values=["Yellow", "White", "Green", "Cyan"], 
+            width=90,
+            fg_color="#1B1E23", button_color="#2C353D", button_hover_color="#1E252B", text_color="#FFFFFF", corner_radius=4
+        ).pack(side="left", padx=5)
 
-        ctk.CTkLabel(sub_style_row, text="Sub Position:").pack(side="left", padx=(15, 5))
+        ctk.CTkLabel(sub_style_row, text="Sub Position:", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="left", padx=(15, 5))
         self.lf_sub_position_var = ctk.StringVar(value=self.get_active_setting("lf_sub_position", "Bottom"))
-        ctk.CTkOptionMenu(sub_style_row, variable=self.lf_sub_position_var, values=["Bottom", "Top", "Center"], width=100).pack(side="left", padx=5)
+        ctk.CTkOptionMenu(
+            sub_style_row, variable=self.lf_sub_position_var, 
+            values=["Bottom", "Top", "Center"], 
+            width=100,
+            fg_color="#1B1E23", button_color="#2C353D", button_hover_color="#1E252B", text_color="#FFFFFF", corner_radius=4
+        ).pack(side="left", padx=5)
 
         style_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         style_row.pack(fill="x", pady=10)
-        ctk.CTkLabel(style_row, text="Script Style:").pack(side="left", padx=(10, 5))
+        ctk.CTkLabel(style_row, text="Script Style:", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="left", padx=(10, 5))
         lf_style_var = ctk.StringVar(value=self.get_active_setting("lf_script_style", "Deep Emotional"))
-        ctk.CTkOptionMenu(style_row, variable=lf_style_var, values=["Deep Emotional", "Book Reading", "Historical Fact", "Tafseer Explanation", "Russian Story (High Retention)", "Family Drama (High Retention)"], width=260).pack(side="left", padx=5)
+        ctk.CTkOptionMenu(
+            style_row, variable=lf_style_var, 
+            values=["Deep Emotional", "Book Reading", "Historical Fact", "Tafseer Explanation", "Russian Story (High Retention)", "Family Drama (High Retention)"], 
+            width=260,
+            fg_color="#1B1E23", button_color="#2C353D", button_hover_color="#1E252B", text_color="#FFFFFF", corner_radius=4
+        ).pack(side="left", padx=5)
 
         hw_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         hw_row.pack(fill="x", pady=10)
-        ctk.CTkLabel(hw_row, text="Hardware Power Mode:").pack(side="left", padx=(10, 5))
+        ctk.CTkLabel(hw_row, text="Hardware Power Mode:", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="left", padx=(10, 5))
         lf_hw_mode_var = ctk.StringVar(value=self.get_active_setting("lf_hardware_mode", "Standard"))
-        ctk.CTkOptionMenu(hw_row, variable=lf_hw_mode_var, values=["Low-End PC (Fastest)", "Standard", "High-End Workstation"], width=200).pack(side="left", padx=5)
+        ctk.CTkOptionMenu(
+            hw_row, variable=lf_hw_mode_var, 
+            values=["Low-End PC (Fastest)", "Standard", "High-End Workstation"], 
+            width=200,
+            fg_color="#1B1E23", button_color="#2C353D", button_hover_color="#1E252B", text_color="#FFFFFF", corner_radius=4
+        ).pack(side="left", padx=5)
 
-        ctk.CTkLabel(lf_frame, text="Audio & Acoustics", font=ctk.CTkFont(weight="bold"), text_color="#00D2FF").pack(anchor="w", pady=(20, 5))
+        ctk.CTkLabel(lf_frame, text="Audio & Acoustics", font=ctk.CTkFont(family="Segoe UI", weight="bold"), text_color="#00A8B5").pack(anchor="w", pady=(20, 5))
         lf_music_row = ctk.CTkFrame(lf_frame, fg_color="transparent")
         lf_music_row.pack(fill="x", pady=5)
-        ctk.CTkLabel(lf_music_row, text="Background Music:").pack(side="left", padx=(10, 5))
-        lf_music_entry = ctk.CTkEntry(lf_music_row, width=200, placeholder_text="Browse audio/video for looping...")
+        ctk.CTkLabel(lf_music_row, text="Background Music:", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="left", padx=(10, 5))
+        lf_music_entry = ctk.CTkEntry(
+            lf_music_row, width=200, placeholder_text="Browse audio/video for looping...",
+            fg_color="#1B1E23", border_color="#2C353D", border_width=1, text_color="#FFFFFF", corner_radius=4,
+            font=ctk.CTkFont(family="Segoe UI", size=12)
+        )
         lf_music_entry.insert(0, self.get_active_setting("lf_bg_music", ""))
         lf_music_entry.pack(side="left", expand=True, fill="x", padx=5)
         
@@ -1288,7 +1520,12 @@ class IslamicReelsStudio(ctk.CTk):
                 lf_music_entry.delete(0, 'end')
                 lf_music_entry.insert(0, file)
                 
-        ctk.CTkButton(lf_music_row, text="📁 Browse", width=80, fg_color="#3A3E41", hover_color="#4A4E51", command=browse_lf_music).pack(side="right", padx=10)
+        ctk.CTkButton(
+            lf_music_row, text="📁 Browse", width=90, height=30,
+            corner_radius=4, fg_color="#2C353D", hover_color="#1E252B", text_color="#FFFFFF",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            command=browse_lf_music
+        ).pack(side="right", padx=10)
 
         def save_and_close():
             self.set_active_setting("enable_sheet_logs", sheet_log_var.get())
@@ -1349,18 +1586,38 @@ class IslamicReelsStudio(ctk.CTk):
             settings_win.withdraw()
             settings_win.after(200, settings_win.destroy)
 
-        ctk.CTkButton(bottom_action_frame, text="Save Profile Settings", height=45, corner_radius=10, font=ctk.CTkFont(weight="bold"), command=save_and_close).pack(fill="x", padx=100)
+        ctk.CTkButton(
+            bottom_action_frame, 
+            text="💾 Save Profile Settings", 
+            height=42, 
+            corner_radius=4, 
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"), 
+            fg_color="#00A8B5", 
+            hover_color="#008C99", 
+            text_color="#FFFFFF",
+            command=save_and_close
+        ).pack(fill="x", padx=100)
 
     def toggle_automation(self):
         if getattr(self, 'engine_thread_active', False):
             self.is_running = False
             self.engine_thread_active = False
-            self.generate_btn.configure(text="🎬 START LONG-FORM AUTOMATION ENGINE", fg_color=["#2CC985", "#2FA572"], hover_color=["#209661", "#22855A"])
+            self.generate_btn.configure(
+                text="🎬 START LONG-FORM AUTOMATION ENGINE", 
+                fg_color="#00A8B5", 
+                hover_color="#008C99", 
+                text_color="#FFFFFF"
+            )
             print("\n[SYSTEM] Stop Command Received: Halting all render and upload processes...")
         else:
             self.is_running = True
             self.engine_thread_active = True
-            self.generate_btn.configure(text="🛑 STOP AUTOMATION ENGINE", fg_color="#D9534F", hover_color="#C9302C")
+            self.generate_btn.configure(
+                text="🛑 STOP AUTOMATION ENGINE", 
+                fg_color="#8B2525", 
+                hover_color="#6E1D1D", 
+                text_color="#FFFFFF"
+            )
             self.log_textbox.configure(state="normal")
             self.log_textbox.delete("1.0", "end") 
             self.log_textbox.configure(state="disabled")
@@ -2079,7 +2336,12 @@ class IslamicReelsStudio(ctk.CTk):
         
         def reset_btn():
             self.engine_thread_active = False 
-            self.generate_btn.configure(text="🎬 START LONG-FORM AUTOMATION ENGINE", fg_color=["#2CC985", "#2FA572"], hover_color=["#209661", "#22855A"])
+            self.generate_btn.configure(
+                text="🎬 START LONG-FORM AUTOMATION ENGINE", 
+                fg_color="#00A8B5", 
+                hover_color="#008C99", 
+                text_color="#FFFFFF"
+            )
         self.after(0, reset_btn)
 
 if __name__ == "__main__":
